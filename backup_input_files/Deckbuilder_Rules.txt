@@ -1,0 +1,29 @@
+Simple Deckbuilder Rules
+
+Game Areas:
+Each player has a deck (face down) and a discard pile (face up). The combination of these two regions is known as a player's personal area. In the center of the table there is the shop (face-up) and the shop deck (face-down). Cards can also be "in play", which just means not in any of the otehr locations.
+
+Setup:
+Give each player a starting card. They put that card face down in their deck area. Shuffle the shop deck (comprised of all non-starter cards), then deal out two cards into the shop. If any of the cards in the shop are point cards, replace them with new cards until there are no point cards in the shop. Shuffle the replaced point cards back into the shop deck.
+
+Winning:
+First player to 7 - [# of players] victory points
+
+Play:
+On a player's turn, they will flip over the top card of their deck (put it in play) and do what it says. Once the card they played finishes resolving, they move it to their discard pile, their turn is over, and the shop is refreshed to the maximum shop size. At the end of each player's first turns, except for the last player's, an additional card should be dealt out from the shop deck and the maximum number of shop cards should be increased by 1.
+
+Types of Cards: 
+Starter - These are the cards that players start with (Each player starts with a single starter card)
+Point - These cards are the way that can gain players points. Some cards refer to point cards or non-point cards
+Solid - Each player must always have at least one solid card in their personal area. If the last solid card would be removed from a player's personal area, it is not.
+
+Mechanics:
+Buy - take a card from the shop and put it in your discard pile
+Trash - Put the trashed card on the bottom of the shop deck
+When Bought - Ability only triggers when the card is gained using the buy action
+When Used - Implicit on most cards, but denotes the ability that a card uses when flipped on a plauyers turn.
+Reveal - Revealed cards can be seen by all players and are in play
+The Die - rolling the die means choosing a random number 1-4, as if rolling a D4
+Go Again - Take another card the top of the deck and reveal it. Move the card that says to go again to your discard, then rosolve the newly resolved card's effect. This does not count as taking a new turn.
+Once Per Turn - This ability can only be activated once per turn: if it has already been activated this turn, ignore it.
+End the Turn - immediately end the turn, even if there are additional effects to be resolved (those effects do not happen)

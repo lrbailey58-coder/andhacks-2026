@@ -1,0 +1,88 @@
+exas Hold'em Poker Rules (No-Limit Texas Hold'em)
+
+Texas Hold'em is the most popular form of poker. The goal is to make the best five-card poker hand using any combination of your two private cards and the five community cards.
+
+1. Setup
+Each player receives 2 private cards (called "hole cards").
+Five community cards are dealt face-up in the center of the table.
+Players share the community cards to build their best five-card hand.
+2. The Blinds
+
+Before cards are dealt:
+
+The player to the dealer's left posts the small blind.
+The next player posts the big blind (usually twice the small blind).
+
+These forced bets start the action.
+
+3. Betting Rounds
+Pre-Flop
+Everyone receives 2 hole cards.
+Action starts with the player left of the big blind.
+Players may:
+Fold: discard their hand and leave the round.
+Call: match the current bet.
+Raise: increase the bet.
+The Flop
+Three community cards are dealt face-up.
+A new betting round begins, starting with the first active player left of the dealer.
+The Turn
+A fourth community card is dealt.
+Another betting round occurs.
+The River
+A fifth and final community card is dealt.
+The last betting round occurs.
+Showdown
+If two or more players remain after the river betting round:
+Players reveal their cards.
+The best five-card hand wins the pot.
+
+4. Hand Rankings (Highest to Lowest)
+Rank	Hand	Example
+1	Royal Flush	A♠ K♠ Q♠ J♠ 10♠
+2	Straight Flush	9♥ 8♥ 7♥ 6♥ 5♥
+3	Four of a Kind	K♣ K♦ K♥ K♠ 3♣
+4	Full House	A♠ A♥ A♦ 7♣ 7♦
+5	Flush	Any 5 cards of same suit
+6	Straight	Five consecutive ranks
+7	Three of a Kind	Q♣ Q♦ Q♥ 8♠ 2♣
+8	Two Pair	J♠ J♦ 4♣ 4♥ A♠
+9	One Pair	10♠ 10♦ K♣ 7♥ 3♠
+10	High Card	A♠ J♦ 9♣ 5♥ 2♠
+5. Using Your Cards
+
+You may use:
+
+Both hole cards + 3 community cards
+One hole card + 4 community cards
+No hole cards at all (play the board)
+
+Your hand is always the best five-card combination available.
+
+Example
+
+Your cards:
+
+A♠ K♠
+
+Board:
+
+Q♠ J♠ 10♠ 2♦ 7♣
+
+Best hand:
+
+A♠ K♠ Q♠ J♠ 10♠
+Royal Flush
+6. Winning the Pot
+
+You can win by:
+
+Everyone else folds before showdown.
+Having the best hand at showdown.
+7. Common Terms
+Check: Pass action without betting (only if no bet is facing you).
+Bet: Put chips into the pot.
+Call: Match a bet.
+Raise: Increase a bet.
+Fold: Discard your hand.
+All-In: Bet all your remaining chips.

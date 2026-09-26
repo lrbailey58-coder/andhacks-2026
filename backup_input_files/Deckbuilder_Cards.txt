@@ -1,0 +1,17 @@
+Here are all the cards, their effects, and their quantities
+
+"Buy a Card" - x4 - Starter, Solid
+"Gain 1 VP, then Trash this card and a card from your discard" - x2 - Point
+"Gain 1 VP, then give this card who has the least points (put it in their discard)" - x1 - Point
+"Gain 1 VP, then put this card in a random player's discard (use die)" - x1 - Point
+"When Bought: Swap with a card in another player's discard; When Used: Buy a Card, Trash this card, end the turn" - x2
+"Trash a card from any discard or the top card of your deck; go again" - x2
+"Force any player (including yourself to buy the shop card of your choice; go again)" - x2
+"Put and non-point card from the shop on the top of any deck; go again" - x2
+"Mix your discard into your deck; reveal the cards in your deck; YOU MAY: steal one card from any opponent's discard and put it into your deck and/or place one card from your deck into an opponent's discard; put your deck back in any order" - x1 - Solid
+"Reveal the cards in your deck. Put them back in any order; Go Again"; x1
+"Go Again Twice (One per Turn)" - x1
+"The next card you use activates twice (once per turn); go again" - x1
+"Force any player to buy a card OR Trash a card from any discard OR Reveal the cards in your deck, put them back in any order; Roll the die: If its a 3 or 4, go again" - x1 - Solid
+"Roll the die, if the result is less than the number of times this ability has been used this turn, gain 1 VP; go again" - x1 - Point
+"Take the top card of each player's decks; put one of them into your discard; put one card on top of each other player's decks, unseen" - x1 - Solid
