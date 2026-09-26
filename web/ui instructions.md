@@ -145,5 +145,20 @@ Finally, a simple left-aligned text box is shown saying "What's next?", followed
 
 # Dummy API
 To test the components, provide a dummy API that will be merged with the real
-API later. It should provide a REST interface for all the triggers and inputs
-described in the Logic section.
+API later. This app will be built on Flask with the backend being an assortment
+of Python scripts connecting to the Gemini API. What that means for us is no
+fancy REST API, json parsing, or database management, the "API", in it's 
+production form, will just be a bunch of exposed python functions being called
+by flask, so the Dummy should match that shape.
+
+The Dummy API should match expected outputs for a few scenarios.
+
+# Testing
+The UI should survive at least two tests:
+
+A test where the user specifies a game and asks for everything.
+
+A test where the user specifies a game poorly and must answer a question to
+continue.
+
+Testing can be done with pytest.
