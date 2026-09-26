@@ -123,12 +123,15 @@ body {
 
 .multiword--pinned .multiword__word { animation: none; color: var(--ink); }
 
+/* The word fades in, sits, then fades out into the next one.  The last frame
+   is where the first one starts, so restarting the cycle mid-flight (which is
+   how the word is swapped) never snaps the word back into place. */
 @keyframes word-cycle {
-  0%   { transform: translateY(0);     opacity: 0; }
-  12%  { transform: translateY(0);     opacity: 1; }
-  62%  { transform: translateY(0);     opacity: 1; }
+  0%   { transform: translateY(0);      opacity: 0; }
+  12%  { transform: translateY(0);      opacity: 1; }
+  62%  { transform: translateY(0);      opacity: 1; }
   92%  { transform: translateY(-1.05em); opacity: 0; }
-  100% { transform: translateY(0);     opacity: 0; }
+  100% { transform: translateY(-1.05em); opacity: 0; }
 }
 
 /* Collapsed to the left once the prompt is submitted. */
@@ -206,10 +209,18 @@ body {
   border-color: var(--line-soft);
 }
 
-/* The same editor, used in three places, reads slightly differently. */
-.editor--primary .editor__input { min-height: 4.5rem; }
+/* The same editor, used in three places, reads slightly differently.  The first
+   one is the tallest, and stays a box: it is asked for a whole prompt. */
+.editor--primary .editor__input { min-height: 3rem; }
+
+/* A question is answered in a sentence, so it is one line that grows to fit
+   (app.js keeps the height on the text), and nothing to drag with. */
 .editor--question { border-color: var(--line); }
-.editor--question .editor__input { min-height: 2.75rem; }
+.editor--question .editor__input {
+  min-height: 0;
+  overflow-y: hidden;
+  resize: none;
+}
 .editor--next { border-color: var(--line); }
 .editor--next .editor__input { min-height: 2.25rem; }
 
@@ -373,7 +384,7 @@ body {
 
 .longblock__body {
   margin: 0;
-  max-height: 30rem;
+  max-height: 18rem;
   overflow: auto;
   font-family: var(--font);
   font-size: 0.92rem;
@@ -383,6 +394,16 @@ body {
   color: var(--ink);
   tab-size: 4;
 }
+
+/* An empty block is one line: no head, no body to scroll, no buttons. */
+.longblock--empty {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line-soft);
+  padding: 0.55rem 0.9rem;
+}
+
+.longblock--empty .longblock__caption { color: var(--ink-mute); }
 
 .longblock--code .longblock__body {
   font-family: var(--mono);

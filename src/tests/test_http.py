@@ -139,8 +139,10 @@ def test_asking_for_the_code_up_front_puts_it_under_deploying(page):
     # It arrived once deploying was under way, before the swarm started playing.
     assert deploying["index"] < code["index"] < playing["index"]
     assert "def initial_game_state" in code["html"]
-    # And the final response got a second column to hold it.
-    assert 'data-columns="2"' in by_id["final-1"]["html"]
+    # And the answer's row grew a column of its own to hold it.  One block in
+    # the row, so the row is one column wide.
+    assert 'data-columns="1"' in by_id["final-1"]["html"]
+    assert 'data-component="LongBlockCode"' in by_id["final-1"]["html"]
 
 
 def test_the_editor_collapses_and_the_title_moves_left(page):
@@ -172,11 +174,16 @@ def test_the_answer_lets_the_run_carry_on(page):
 
     # The run carried on to the answer, reusing the editor already on the page.
     assert any(f.get("component") == ui.COMPONENT_LONG_BLOCK_RESPONSE for f in frames)
-    assert not any(f.get("component") == ui.COMPONENT_STATUS_QUESTION for f in frames)
+    # The question on the page is the one that was asked: it is resolved with a
+    # <Result> in this run, and no second question is put to the user.
+    assert not any(
+        f["op"] == "insert" and f.get("component") == ui.COMPONENT_STATUS_QUESTION
+        for f in frames
+    )
 
 
 def test_asking_to_see_the_code_later_puts_it_under_deploying(page):
-    run(page, COMPLETE_PROMPT)
+    run_frames = run(page, COMPLETE_PROMPT)
     frames = frames_of(
         page.post("/api/toggle", json={"which": "code", "value": True})
     )
@@ -184,8 +191,10 @@ def test_asking_to_see_the_code_later_puts_it_under_deploying(page):
     assert [f["op"] for f in frames] == ["update", "insert"]
     assert frames[-1].get("component") == ui.COMPONENT_LONG_BLOCK_CODE
     # It was anchored after the deploying status, not at the end of the feed.
+    # That status went in with the run, so it is read out of the run's frames;
+    # both numbers are positions in the one feed.
     deploying = next(
-        f for f in frames
+        f for f in run_frames
         if f["id"].startswith("status") and 'data-status="deploying"' in f["html"]
     )
     assert frames[-1]["index"] > deploying["index"]

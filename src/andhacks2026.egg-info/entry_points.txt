@@ -1,2 +1,0 @@
-[console_scripts]
-andhacks2026 = andhacks2026:main

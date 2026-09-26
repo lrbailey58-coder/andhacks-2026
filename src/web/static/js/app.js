@@ -165,13 +165,15 @@
       node.matches(".editor:not(.is-submitted)")
         ? node.querySelector(".editor__input")
         : null;
-    if (area) autoGrow(area);
+    /* An editor that grows to fit starts at the height of its text, which for a
+       fresh question is the single line it is given. */
+    if (area && area.getAttribute("data-auto-grow") === "1") autoGrow(area);
     var typed = node.querySelectorAll(".typed");
     for (var i = 0; i < typed.length; i += 1) startTyping(typed[i]);
     var word = node.matches(".multiword") ? node : node.querySelector(".multiword");
     if (word) startWordCycle(word);
     var pinger = node.matches("[data-ping]") ? node : node.querySelector("[data-ping]");
-    if (pinger) ping(pinger.getAttribute("data-ping"));
+    if (pinger) ping(pinger);
     if (atBottom()) scrollTo(node);
   }
 
@@ -231,6 +233,9 @@
 
   /* ------------------------------------------------------------- multiword */
 
+  /* The word is swapped where the stylesheet's cycle is invisible, and the
+     cycle is restarted in the same breath, so the two cannot drift apart:
+     that is what used to change the word in the middle of a scroll. */
   function startWordCycle(node) {
     if (node.getAttribute("data-multiword") === "0") return;
     if (node.dataset.cycling === "1") return;
@@ -246,40 +251,75 @@
     if (!slot) return;
     var period = parseInt(node.getAttribute("data-period") || "2600", 10);
     var index = parseInt(node.getAttribute("data-index") || "0", 10);
-    /* Swap while the word is faded out, near the end of the CSS cycle. */
-    window.setInterval(function () {
-      index = (index + 1) % words.length;
+    var timer = null;
+
+    function step(by) {
+      index = (index + by + words.length) % words.length;
       slot.textContent = words[index];
       node.setAttribute("data-index", String(index));
-    }, period * 0.86);
+    }
+
+    /* The stylesheet's cycle, from the top: it starts with the word faded out,
+       which is the one moment a change cannot be seen. */
+    function restart() {
+      slot.style.animation = "none";
+      void slot.offsetWidth; /* a reflow, so the animation really does restart */
+      slot.style.animation = "";
+    }
+
+    function schedule() {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(advance, period);
+    }
+
+    function advance() {
+      restart();
+      step(1);
+      schedule();
+    }
+
+    /* Scrolling over the word changes it at once, with no scroll of its own,
+       and starts the cycle over, so the next change is a whole period away
+       instead of whatever was left of the last one. */
+    function jump(event) {
+      var travel = event.deltaY + event.deltaX;
+      if (Math.abs(travel) < 4) return;
+      window.clearTimeout(timer);
+      slot.style.animation = "none";
+      step(travel < 0 ? -1 : 1);
+      schedule();
+    }
+
+    schedule();
+    node.addEventListener("wheel", jump, { passive: true });
   }
 
   /* ------------------------------------------------------------------ ping */
 
-  var audio = null;
+  /* The sound is the file the app ships with, played through one element that
+     is rewound rather than rebuilt, so overlapping pings still land. */
+  var sound = null;
 
-  function ping(reason) {
+  function ping(node) {
+    var src = node && node.getAttribute("data-audio");
+    if (!src) return;
     try {
-      var Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      if (!audio) audio = new Ctx();
-      if (audio.state === "suspended" && audio.resume) audio.resume();
-      var now = audio.currentTime;
-      var notes = reason === "task_failed" ? [392, 311] : [523.25, 783.99];
-      for (var i = 0; i < notes.length; i += 1) {
-        var osc = audio.createOscillator();
-        var gain = audio.createGain();
-        osc.type = "sine";
-        osc.frequency.value = notes[i];
-        gain.gain.setValueAtTime(0.0001, now + i * 0.13);
-        gain.gain.exponentialRampToValueAtTime(0.08, now + i * 0.13 + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.13 + 0.18);
-        osc.connect(gain).connect(audio.destination);
-        osc.start(now + i * 0.13);
-        osc.stop(now + i * 0.13 + 0.2);
+      if (!sound) {
+        sound = new Audio(src);
+        sound.preload = "auto";
+        sound.volume = 0.5;
+      }
+      sound.currentTime = 0;
+      var played = sound.play();
+      /* A tab that has never been clicked blocks playback, and that is not
+         worth breaking the feed over. */
+      if (played && played.catch) {
+        played.catch(function () {
+          /* nothing to do */
+        });
       }
     } catch (err) {
-      /* a missing sound is never worth breaking the page over */
+      /* no sound is better than a broken feed */
     }
   }
 
@@ -451,10 +491,14 @@
 
     var toggle = target.closest("[data-toggle]");
     if (toggle && toggle.tagName === "INPUT") {
-      stream("/api/toggle", {
-        which: toggle.getAttribute("data-toggle"),
-        value: !!toggle.checked
-      });
+      var which = toggle.getAttribute("data-toggle");
+      /* One setting, more than one checkbox: the click settles them all, so
+         the model never has to echo a checkbox the user is already looking at. */
+      var boxes = document.querySelectorAll(
+        'input[type="checkbox"][data-toggle="' + which + '"]'
+      );
+      for (var i = 0; i < boxes.length; i += 1) boxes[i].checked = toggle.checked;
+      stream("/api/toggle", { which: which, value: !!toggle.checked });
     }
   });
 
@@ -518,5 +562,8 @@
   var words = document.querySelectorAll(".multiword");
   for (var j = 0; j < words.length; j += 1) startWordCycle(words[j]);
   var first = document.querySelector(".editor:not(.is-submitted) .editor__input");
-  if (first) { autoGrow(first); first.focus(); }
+  if (first) {
+    if (first.getAttribute("data-auto-grow") === "1") autoGrow(first);
+    first.focus();
+  }
 })();

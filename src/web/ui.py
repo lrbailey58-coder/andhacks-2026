@@ -96,6 +96,9 @@ PROMPT_PLACEHOLDER = (
     "Describe a board game, scenario or simulation, alternatively, "
     "drag and drop a file"
 )
+#: The editor that answers a question says so: a different default text, and the
+#: same one whichever question was asked.
+QUESTION_PLACEHOLDER = "Answer the question, then Enter to carry on"
 PROMPT_BUTTON_LABEL = "Show me the code"
 FOLLOWUP_HEADING = "What's next?"
 
@@ -377,14 +380,24 @@ def prompt_editor(
     show_code: bool = False,
     value: str = "",
 ) -> Entry:
+    """The editor for ``role``, sized to what it is asked for.
+
+    The first editor is the tall one: it takes a whole prompt.  A question gets
+    a short answer, so it is one line that grows to fit, and says what it is for
+    rather than repeating the first editor's text.
+    """
+
+    question = role == "question"
     props: dict[str, Any] = {
         "role": role,
-        "placeholder": PROMPT_PLACEHOLDER,
+        "placeholder": QUESTION_PLACEHOLDER if question else PROMPT_PLACEHOLDER,
         "value": value,
         "submitted": False,
         "align": "wide",
         "drop_target": role == "primary",
         "show_code": show_code,
+        "rows": 1 if question else 2,
+        "auto_grow": question,
     }
     if show_code:
         # <ShowCode> lives to the right of the <PromptEditor>.
@@ -726,31 +739,56 @@ def _set_toggle(
     current: bool,
     value: bool,
 ) -> list[Patch]:
+    """A ``<ShowCode>`` / ``<ShowSample>`` was checked or unchecked.
+
+    The checkbox that was clicked is already showing the new state and the
+    browser keeps the other copies of that checkbox in step with it, so what
+    travels back is the feed: the row beside the answer, and the block anchored
+    to the step that produced it.
+    """
+
     value = bool(value)
     if component == COMPONENT_SHOW_CODE:
         state.show_code = value
     else:
         state.show_sample = value
 
-    patches: list[Patch] = []
+    # The model's copies of the checkbox follow anyway, so the next render of
+    # any of them - the one at <StatusPlaying>, the one at the answer - is right.
     for checkbox in _checkboxes(state, component):
-        if checkbox.props.get("checked") == value:
-            continue
         checkbox.props["checked"] = value
-        patches.append(update_patch(checkbox))
+    if component == COMPONENT_SHOW_CODE:
+        # <ShowCode> also lives inside the primary editor's own markup.
+        for entry in state.entries:
+            if entry.component == COMPONENT_PROMPT_EDITOR and entry.props.get("show_code"):
+                entry.props["code_checked"] = value
 
-    # The blocks that sit in the middle of the feed, anchored to their step.
-    mid_feed_id = f"{what}-{state.run}"
-    available = state.code is not None if what == "code" else state.sample is not None
-    if value and available and state.find(mid_feed_id) is None:
-        patches.extend(show_code(state) if what == "code" else show_sample(state))
-    elif not value and state.find(mid_feed_id) is not None:
-        state.entries.remove(state.entry(mid_feed_id))
-        patches.append(remove_patch(mid_feed_id))
-
-    # The blocks that sit at the bottom, next to the response, side by side.
-    patches.extend(_set_final(state, what, value))
+    patches: list[Patch] = []
+    if value:
+        # The row beside the answer settles first, then the block beside the
+        # step that made it.
+        patches.extend(_set_final(state, what, value))
+        patches.extend(_set_mid_feed(state, what, value))
+    else:
+        # Coming out, the block in the feed goes first, then the row closes.
+        patches.extend(_set_mid_feed(state, what, value))
+        patches.extend(_set_final(state, what, value))
     return patches
+
+
+def _set_mid_feed(state: UIState, what: str, value: bool) -> list[Patch]:
+    """The block in the middle of the feed, anchored to the step that made it."""
+
+    entry_id = f"{what}-{state.run}"
+    shown = state.find(entry_id) is not None
+    if value:
+        if shown:
+            return []
+        return show_code(state) if what == "code" else show_sample(state)
+    if not shown:
+        return []
+    state.entries.remove(state.entry(entry_id))
+    return [remove_patch(entry_id)]
 
 
 def _set_final(state: UIState, what: str, value: bool) -> list[Patch]:
@@ -759,6 +797,7 @@ def _set_final(state: UIState, what: str, value: bool) -> list[Patch]:
         return []
     entry_id = f"final-{what}-{state.run}"
     block = next((child for child in group.children if child.id == entry_id), None)
+    patches: list[Patch] = []
     if value and block is None:
         block = (
             _code_block(state, entry_id)
@@ -768,11 +807,16 @@ def _set_final(state: UIState, what: str, value: bool) -> list[Patch]:
         block.props["column"] = True
         group.add(block)
     elif not value and block is not None:
+        # The block is an element in its own right, so the browser is told to
+        # drop it by id; the group is re-rendered behind it so the row matches
+        # the model again and closes up.
         group.children.remove(block)
+        patches.append(remove_patch(entry_id))
     else:
         return []
     group.props["columns"] = len(group.children)
-    return [update_patch(group)]
+    patches.append(update_patch(group))
+    return patches
 
 
 def _checkboxes(state: UIState, component: str) -> list[Entry]:

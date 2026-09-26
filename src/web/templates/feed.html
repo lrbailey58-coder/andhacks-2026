@@ -48,11 +48,13 @@
 {#
   Enter submits; Enter with any modifier is a plain newline inside the editor.
   A submitted editor slides to a right alignment and gains copy and download.
+  The editor that answers a question is one line that grows to fit (app.js
+  grows it), so it carries no manual resize: answers are short.
 #}
 {% macro prompt_editor(e) %}
 <form class="editor editor--{{ e.props.role }} editor--{{ e.props.align }}{% if e.props.submitted %} is-submitted{% endif %}" data-entry-id="{{ e.id }}" data-component="PromptEditor" data-role="{{ e.props.role }}" data-state="{{ 'submitted' if e.props.submitted else 'editing' }}" data-align="{{ e.props.align }}"{% if e.props.drop_target %} data-drop-target="1"{% endif %}>
   <div class="editor__row">
-    <textarea class="editor__input" name="prompt" rows="3" spellcheck="true" placeholder="{{ e.props.placeholder }}" aria-label="{{ e.props.placeholder }}">{{ e.props.value }}</textarea>
+    <textarea class="editor__input" name="prompt" rows="{{ e.props.rows | default(2) }}" spellcheck="true" placeholder="{{ e.props.placeholder }}" aria-label="{{ e.props.placeholder }}"{% if e.props.auto_grow %} data-auto-grow="1"{% endif %}>{{ e.props.value }}</textarea>
     {% if e.props.show_code %}{{ show_code_entry(e) }}{% endif %}
   </div>
   <div class="editor__foot">
@@ -97,8 +99,10 @@
     {% if e.props.arrow %}<span class="status__arrow" aria-hidden="true">{{ e.props.arrow }}</span>{% endif %}
     {% if e.props.glyph == 'checkerboard' %}{{ checkerboard() }}{% endif %}
     {% if question %}<span class="status__question">{{ e.props.text }}</span>{% else %}<span class="status__label">{{ e.props.label }}</span>{% endif %}
-    <span class="status__state">{% for child in e.children %}{{ entry(child) }}{% endfor %}</span>
+    <span class="status__state">{% for child in e.children %}{% if child.component != 'PromptEditor' %}{{ entry(child) }}{% endif %}{% endfor %}</span>
   </p>
+  {# The editor of a question sits under the line, not in the state slot: it is
+     rendered here exactly once, wherever it is asked. #}
   {% for child in e.children %}{% if child.component == 'PromptEditor' %}{{ entry(child) }}{% endif %}{% endfor %}
 </div>
 {% endmacro %}
@@ -144,18 +148,29 @@
 {% endmacro %}
 
 {% macro long_block(e) %}
-<section class="longblock longblock--{{ e.props.variant | default('text') }}" data-entry-id="{{ e.id }}" data-component="LongBlock" data-variant="{{ e.props.variant | default('text') }}" data-lines="{{ e.props.rows }}">
+{% set empty = not e.props.text %}
+<section class="longblock longblock--{{ e.props.variant | default('text') }}{% if empty %} longblock--empty{% endif %}" data-entry-id="{{ e.id }}" data-component="LongBlock" data-variant="{{ e.props.variant | default('text') }}" data-lines="{{ e.props.rows }}">
+  {% if empty %}
+  {# An empty block has nothing to type, to scroll or to copy: it is one line. #}
+  <p class="longblock__caption">{{ e.props.caption }} &mdash; nothing yet</p>
+  {% else %}
   {{ long_block_head(e) }}
   {{ typed_body(e) }}
   {% if e.props.buttons %}<footer class="longblock__foot">{{ copy_download(e) }}</footer>{% endif %}
+  {% endif %}
 </section>
 {% endmacro %}
 
 {% macro long_block_code(e) %}
-<section class="longblock longblock--code" data-entry-id="{{ e.id }}" data-component="LongBlockCode" data-variant="code" data-language="{{ e.props.language }}" data-lines="{{ e.props.rows }}">
+{% set empty = not e.props.text %}
+<section class="longblock longblock--code{% if empty %} longblock--empty{% endif %}" data-entry-id="{{ e.id }}" data-component="LongBlockCode" data-variant="code" data-language="{{ e.props.language }}" data-lines="{{ e.props.rows }}">
+  {% if empty %}
+  <p class="longblock__caption">{{ e.props.caption }} &mdash; nothing yet</p>
+  {% else %}
   {{ long_block_head(e) }}
   {{ typed_body(e, e.props.language) }}
   <footer class="longblock__foot">{{ copy_download(e) }}</footer>
+  {% endif %}
 </section>
 {% endmacro %}
 
@@ -210,7 +225,10 @@
 #}
 {% macro followup(e) %}
 <section class="followup" data-entry-id="{{ e.id }}" data-component="Followup" data-align="left">
-  <h2 class="followup__heading">{{ e.props.heading }}</h2>
+  {# The heading is one of the brief's own fixed strings, not anything the user
+     wrote, so it is marked as such: the apostrophe in "What's next?" is the one
+     the document uses. #}
+  <h2 class="followup__heading">{{ e.props.heading | safe }}</h2>
   {% for child in e.children %}{{ entry(child) }}{% endfor %}
 </section>
 {% endmacro %}
@@ -218,8 +236,9 @@
 {# -------------------------------------------------------------------- Ping #}
 {#
   Invisible, and makes a sound: the user is told a task finished even when the
-  tab is in the background.
+  tab is in the background.  The sound is the file that ships with the app, so
+  the alert is the same one everywhere.
 #}
 {% macro ping(e) %}
-<span class="ping" data-entry-id="{{ e.id }}" data-component="Ping" data-ping="{{ e.props.reason }}" data-tone="{{ e.props.tone }}" aria-hidden="true" hidden></span>
+<span class="ping" data-entry-id="{{ e.id }}" data-component="Ping" data-ping="{{ e.props.reason }}" data-tone="{{ e.props.tone }}" data-audio="{{ url_for('static', filename='audio/ping.wav') }}" aria-hidden="true" hidden></span>
 {% endmacro %}

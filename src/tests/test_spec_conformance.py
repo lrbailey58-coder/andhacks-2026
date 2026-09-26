@@ -15,7 +15,9 @@ import pytest
 import web.render as render
 import web.ui as ui
 
-WEB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+WEB_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web"
+)
 INSTRUCTIONS = os.path.join(WEB_DIR, "ui instructions.md")
 STYLESHEET = os.path.join(WEB_DIR, "static", "css", "style.css")
 SCRIPT = os.path.join(WEB_DIR, "static", "js", "app.js")

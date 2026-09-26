@@ -42,9 +42,12 @@ def turn(
         yield [ui.answer_question(state, text)]
     else:
         # "What's next?" starts another run with the definition appended to.
+        # What is appended is what the editor carried, dropped files and all,
+        # because that is what ``submit`` already put together.
         previous = state.prompt
+        added = ui.combine_prompt(text, files)
         yield [ui.start_run(state, text, files)]
-        state.prompt = f"{previous}\n\n{text}".strip() if previous else text
+        state.prompt = f"{previous}\n\n{added}".strip() if previous else added
 
     # -- interpreting, looping on <StatusQuestion> until the rules hold up ----
     while True:
