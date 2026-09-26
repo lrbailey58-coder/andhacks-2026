@@ -22,10 +22,10 @@ WEB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if WEB_DIR not in sys.path:
     sys.path.insert(0, WEB_DIR)
 
-import app  # noqa: E402
-import dummy_api  # noqa: E402
-import render  # noqa: E402
-import ui  # noqa: E402
+import web.app as app  # noqa: E402
+import web.dummy_api as dummy_api  # noqa: E402
+import web.render as render  # noqa: E402
+import web.ui as ui  # noqa: E402
 
 COMPLETE_PROMPT = (
     "A two player game of tic tac toe on a 3x3 grid. X moves first, players "

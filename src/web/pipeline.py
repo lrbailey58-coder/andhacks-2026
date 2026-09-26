@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Iterator, Sequence
 
-import dummy_api
-import ui
+import web.dummy_api as dummy_api
+import web.ui as ui
 
 Patch = dict[str, Any]
 

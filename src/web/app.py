@@ -18,10 +18,10 @@ from typing import Any, Iterator
 
 from flask import Flask, Response, request
 
-import dummy_api
-import pipeline
-import render
-import ui
+import web.dummy_api as dummy_api
+import web.pipeline as pipeline
+import web.render as render
+import web.ui as ui
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 

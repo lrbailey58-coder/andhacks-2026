@@ -11,10 +11,10 @@ import json
 
 import pytest
 
-import app as server
-import dummy_api
-import ui
-from conftest import COMPLETE_PROMPT, VAGUE_PROMPT
+import web.app as server
+import web.dummy_api as dummy_api
+import web.ui as ui
+from src.tests.conftest import COMPLETE_PROMPT, VAGUE_PROMPT
 
 
 @pytest.fixture()

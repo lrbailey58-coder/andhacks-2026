@@ -12,8 +12,8 @@ import re
 
 import pytest
 
-import render
-import ui
+import web.render as render
+import web.ui as ui
 
 WEB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTRUCTIONS = os.path.join(WEB_DIR, "ui instructions.md")

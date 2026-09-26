@@ -13,7 +13,7 @@ from typing import Any, Iterable
 import flask
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-import ui
+import web.ui as ui
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 

@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-import pipeline
-import render
-import ui
+import web.pipeline as pipeline
+import web.render as render
+import web.ui as ui
 
 
 def drive(state: ui.UIState, text: str) -> ui.UIState:

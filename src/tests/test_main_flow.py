@@ -8,8 +8,8 @@ the component rules are all exercised.
 
 from __future__ import annotations
 
-from conftest import COMPLETE_PROMPT, UNSTABLE_PROMPT, VAGUE_PROMPT
-import ui
+from src.tests.conftest import COMPLETE_PROMPT, UNSTABLE_PROMPT, VAGUE_PROMPT
+import web.ui as ui
 
 STATUSES = [
     "StatusInterpreting",
