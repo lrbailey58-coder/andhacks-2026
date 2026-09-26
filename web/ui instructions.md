@@ -161,4 +161,4 @@ A test where the user specifies a game and asks for everything.
 A test where the user specifies a game poorly and must answer a question to
 continue.
 
-Testing can be done with pytest.
+Tests can be written using pytest.
