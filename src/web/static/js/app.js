@@ -813,7 +813,7 @@
   if (typeof window !== "undefined" && window.addEventListener) {
     window.addEventListener("error", function (event) {
       report("uncaught error", {
-        where: event.filename + ":" + event.lineno,
+        where: event.filename ? event.filename + ":" + event.lineno : "somewhere",
         error: String((event.error && event.error.message) || event.message)
       });
     });

@@ -53,8 +53,8 @@ from api_errors import BackendUnavailable
 # ---------------------------------------------------------------------------
 
 RULES_MODEL = "gemini-3.1-pro-preview"
-DESIGN_MODEL = "gemini-3.1-pro-preview"
-PLAYER_MODEL = "gemini-2.5-flash"
+DESIGN_MODEL = "gemini-2.5-flash"
+PLAYER_MODEL = "gemini-2.5-flash-lite"
 
 MAX_TURNS = 150
 MAX_RETRIES = 3

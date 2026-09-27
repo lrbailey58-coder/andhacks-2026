@@ -259,17 +259,23 @@ def key_report() -> dict[str, Any]:
     """Where the Gemini key came from, or that it was never found.
 
     A place and never a value, because this is printed into browser consoles.
-    The ``.env`` is read directly as well as the environment: ``load_dotenv``
-    only runs when the real backend is first imported, so a teammate whose key
-    is sitting in a ``.env`` the server never found would otherwise be told they
-    have no key at all - the opposite of the truth, and a long way from obvious.
+    The ``.env`` is read as well as the environment, and read first: once the
+    real backend has been imported ``load_dotenv`` has put the file's key into the
+    environment as well, and a teammate looking at "environment" would go
+    hunting through their shell for something they never typed.
+
+    Reading the file directly is also what makes the answer right before the
+    first run - a key sitting in a ``.env`` the server never found would
+    otherwise be reported as no key at all, the opposite of the truth, and a long
+    way from obvious.
     """
 
     dotenv = find_dotenv()
+    filed = dotenv_values(dotenv).get("GEMINI_API_KEY") if dotenv else None
+    if filed:
+        return {"key_found": True, "key_source": "dotenv", "dotenv": dotenv}
     if os.environ.get("GEMINI_API_KEY"):
         return {"key_found": True, "key_source": "environment", "dotenv": dotenv}
-    if dotenv and dotenv_values(dotenv).get("GEMINI_API_KEY"):
-        return {"key_found": True, "key_source": "dotenv", "dotenv": dotenv}
     return {
         "key_found": False,
         "key_source": "missing",

@@ -93,6 +93,9 @@ function newPage(bodyHtml) {
   const requests = [];
   const queues = [];
   const encoder = new TextEncoder();
+  /* Set by ``offline()``: after that nothing answers, which is what a page looks
+     like when the server is not running or the request was blocked. */
+  let offline = false;
 
   /* One gate per stream being read.  Open means every read resolves at once;
      held means reads park until the harness lets one through.  A run in flight
@@ -264,15 +267,43 @@ function newPage(bodyHtml) {
     await settle();
   }
 
-  return {
+  const page = {
     document,
     requests,
+    /* Everything app.js wrote to the console while this page was open. */
+    console: log,
+    /* What the server says when the page asks what it knows.  A page with no key
+       is the case being reproduced. */
+    diagnostics: {
+      api: "real",
+      client_built: false,
+      key_found: false,
+      key_source: "missing",
+      calls: [],
+      failures: 1,
+    },
 
     /* The patches the next request will answer with.  ``hold`` stops the stream
        at its first frame, so the harness can look at the page mid run. */
     stream(frames, hold = false) {
       queues.push(frames);
       claimed.push({ open: !hold, waiting: [] });
+    },
+
+    /* The next request is refused with this status and body, instead of being
+       answered with patches. */
+    refuse(status, body) {
+      queues.push({ status, body });
+    },
+
+    /* Nothing answers anything from now on. */
+    offline(value = true) {
+      offline = value;
+    },
+
+    /* An event on the window, as the browser would deliver it. */
+    fireWindow(type, event) {
+      for (const handler of [...(windowListeners.get(type) || [])]) handler(event);
     },
 
     async submit(text) {
@@ -326,6 +357,8 @@ function newPage(bodyHtml) {
       }
     },
   };
+
+  return page;
 }
 
 /* ----------------------------------------------------------------- shapes -- */
@@ -615,6 +648,103 @@ const scenarios = input.scenarios;
   ok(!text.includes("{'"), "a generated engine's moves are shown, not their repr");
   equal(document.querySelectorAll('[data-status="running"]').length, 0,
     "nothing is left running once the run is over");
+
+  page.restore();
+}
+
+/* --- 3. a run that will not start, and what the console says about it ------ */
+
+{
+  const page = newPage(input.page);
+  const document = page.document;
+
+  /* The swarm is down before the first step, which is the answer the server
+     gives when it cannot reach Gemini.  Nothing appears in the feed for it, so
+     the console is the only place the reason exists. */
+  page.refuse(409, JSON.stringify({ error: "gemini-3.1-pro-preview did not answer" }));
+  await page.submit(scenarios.prompts.complete);
+
+  const reported = page.console.filter((line) => line.level === "error");
+  ok(reported.length > 0, "a run that will not start is written to the console");
+
+  const failure = reported.find((line) => String(line.args[0]).indexOf("/api/turn") !== -1);
+  ok(failure !== undefined, "the report names the request that failed");
+  if (failure) {
+    const note = failure.args[1];
+    equal(note.sent.text, scenarios.prompts.complete.length, "the report says how much was sent");
+    ok(String(note.why).indexOf("409") !== -1, `and the status the server gave (got ${note.why})`);
+    ok(
+      String(note.why).indexOf("did not answer") !== -1,
+      "and the server's own reason for it, which the status does not carry"
+    );
+    ok(!JSON.stringify(note).includes(scenarios.prompts.complete.slice(0, 12)),
+      "the prompt itself is not in the report, only its length");
+  }
+
+  equal(
+    page.requests.filter((r) => r.path === "/api/diagnostics").length,
+    1,
+    "the console then asks the server what it knows"
+  );
+  const server = page.console.find((line) => line.args[0] === "[hacks] server diagnostics");
+  ok(server !== undefined, "and what it knows is printed with the report");
+  if (server) {
+    equal(server.args[1].key_found, false, "...including that the server has no key");
+    equal(server.args[1].key_source, "missing", "...and where it looked for one");
+  }
+  equal(document.body.getAttribute("data-busy"), "0",
+    "and the page is not left busy, waiting for a run that will not start");
+
+  page.restore();
+}
+
+/* --- 4. a request that never reaches the server at all --------------------- */
+
+{
+  const page = newPage(input.page);
+
+  /* The same page, the same run, and nothing listening: which is a different
+     failure with a different fix, so the report has to say which one it was
+     rather than only that something went wrong. */
+  page.offline();
+  await page.submit(scenarios.prompts.complete);
+
+  const reported = page.console.filter(
+    (line) => line.level === "error" && String(line.args[0]).indexOf("/api/turn") !== -1
+  );
+  equal(reported.length, 1, "the request that never left the browser is reported");
+  if (reported.length === 1) {
+    const note = reported[0].args[1];
+    ok(String(note.why).indexOf("never reached the server") !== -1,
+      `and it says so (got ${note.why})`);
+    ok(String(note.hint).indexOf("diagnostics") !== -1,
+      "with something to try, rather than a bare failure");
+  }
+
+  page.restore();
+}
+
+/* --- 5. an error nobody caught, and a patch nobody could read ---------------- */
+
+{
+  const page = newPage(input.page);
+
+  page.fireWindow("unhandledrejection", { reason: new Error("nothing caught this") });
+  const report = page.console.find((line) => line.level === "error");
+  ok(report !== undefined, "a rejected promise nobody caught is written to the console");
+  if (report) {
+    ok(String(report.args[1].error).indexOf("nothing caught this") !== -1,
+      "...with what it was, which is otherwise invisible");
+  }
+
+  page.fireWindow("error", {
+    filename: "app.js",
+    lineno: 12,
+    message: "x is not a function",
+    error: new TypeError("x is not a function"),
+  });
+  const uncaught = page.console.find((line) => line.level === "error" && line.args[1].where);
+  ok(uncaught !== undefined, "so is an uncaught error, and where it came from");
 
   page.restore();
 }
