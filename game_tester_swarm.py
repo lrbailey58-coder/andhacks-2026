@@ -21,8 +21,8 @@ except Exception as e:
     sys.exit(1)
 
 # Model definitions based on optimal roles
-RULES_MODEL = "gemini-2.5-pro"
-DESIGN_MODEL = "gemini-2.5-pro"
+RULES_MODEL = "gemini-3.1-pro-preview"
+DESIGN_MODEL = "gemini-3.1-pro-preview"
 PLAYER_MODEL = "gemini-2.5-flash"
 
 MAX_TURNS = 150
@@ -128,11 +128,25 @@ def generate_game_engine(restated_rules):
     The code MUST contain the following functions exactly:
     
     1. `initial_game_state(player_count)`: Returns the starting state dictionary (include hidden info).
-    2. `rule_function(game_state, move, player_id)`: Returns True if 'move' is legal, False otherwise.
+        Player IDs are 0-based: 0 through player_count - 1. Use those same IDs everywhere
+        (state dict keys, current player, winner, and every player_id argument).
+    2. `list_valid_moves(game_state, player_id)`: Returns a list of every legal move that
+        player can make right now. Do NOT take a candidate move argument.
+        Discrete moves are concrete values (for example "action": "fold").
+        If a move needs a number, do NOT enumerate every integer. Put a [min, max, step]
+        list in that field, where min is inclusive, max is exclusive, and step is the
+        spacing between legal values. Example: "action": "raise", "amount": [40, 200, 1].
+        A move may contain more than one ranged field.
+        Return an empty list if that player cannot act (not their turn, folded, eliminated,
+        or the game is already over).
     3. `execution_function(game_state, move, player_id)`: Returns the NEW updated game_state.
-    4. `eval_function(game_state)`: Returns the player_id of the winner, or None if no winner yet.
-    5. `translation_function(x1, x2, p)`: Takes current game state (x1), another player's previous state (x2), and that player's ID (p). It returns a new state for player 'p' that removes hidden info they shouldn't see, but keeps their own hidden info.
-    6. `get_random_valid_move(game_state, player_id)`: Returns a random legal move (used if AI fails too many times).
+        `move` is always concrete: every ranged field has already been replaced by one chosen number.
+    4. `eval_function(game_state)`: Returns the player_id of the winner (0-based), or None if no winner yet.
+    5. `translation_function(x1, x2, p)`: Takes current game state (x1), another player's previous state (x2), and that player's ID (p, 0-based). It returns a new state for player 'p' that removes hidden info they shouldn't see, but keeps their own hidden info.
+    6. `get_random_valid_move(game_state, player_id)`: Returns one random legal move.
+        Build it from `list_valid_moves` — do not duplicate legality rules.
+        If a listed move contains a [min, max, step] field, pick one in-range number
+        (min <= n < max and (n - min) % step == 0) instead of returning the range itself.
     
     Output ONLY valid Python code inside a ```python block. No markdown outside the block.
     
@@ -169,6 +183,61 @@ def generate_game_engine(restated_rules):
     
     return engine
 
+def _is_range_spec(value):
+    """A compact numeric choice: [min, max, step], min inclusive, max exclusive."""
+    return (
+        isinstance(value, list)
+        and len(value) == 3
+        and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in value)
+        and value[2] != 0
+    )
+
+def _number_in_range(chosen, spec):
+    """True if chosen is a number on the [min, max, step] lattice."""
+    if isinstance(chosen, bool) or not isinstance(chosen, (int, float)):
+        return False
+    minimum, maximum, step = spec
+    if not (minimum <= chosen < maximum):
+        return False
+    # Integer lattice uses modulo so 40 matches [40, 200, 1] exactly.
+    if all(isinstance(n, int) for n in (chosen, minimum, step)):
+        return (chosen - minimum) % step == 0
+    units = (chosen - minimum) / step
+    return abs(units - round(units)) < 1e-9
+
+def move_is_listed(chosen_move, valid_moves):
+    """True if chosen_move equals a listed move, expanding any [min, max, step] fields.
+
+    The player always returns a concrete move. A listed entry may still contain
+    ranges, and those match when every other field is equal and each number is in range.
+    """
+    if not isinstance(valid_moves, list):
+        return False
+    for listed in valid_moves:
+        if not isinstance(listed, dict) or not isinstance(chosen_move, dict):
+            if listed == chosen_move:
+                return True
+            continue
+        if set(listed.keys()) != set(chosen_move.keys()):
+            continue
+        if all(
+            (_is_range_spec(listed_value) and _number_in_range(chosen_move[key], listed_value))
+            or (not _is_range_spec(listed_value) and listed_value == chosen_move[key])
+            for key, listed_value in listed.items()
+        ):
+            return True
+    return False
+
+def format_valid_moves(valid_moves):
+    """Text the player agent must choose from. Ranges stay compact, not expanded."""
+    rendered = json.dumps(valid_moves, indent=2, default=str)
+    return (
+        "Valid moves (you must choose one of these exactly; "
+        "if a field is [min, max, step], pick one number in that range, "
+        "min inclusive and max exclusive, and return that number — not the range):\n"
+        f"{rendered}"
+    )
+
 # ---------------------------------------------------------------------------
 # Phase 4 & 5: Instantiation and Game Loop
 # ---------------------------------------------------------------------------
@@ -176,11 +245,11 @@ def play_game(engine, restated_rules, player_count):
     """Instantiates Player Agents and runs the turn-by-turn game loop."""
     print(f"\n[System] Instantiating Game with {player_count} players...")
     
-    # Global state is tracked by the engine
+    # Global state is tracked by the engine. Player IDs are 0-based.
     global_state = engine.initial_game_state(player_count)
     
     # Each player maintains their own perspective of the state
-    player_states = {i: global_state for i in range(1, player_count + 1)}
+    player_states = {i: global_state for i in range(player_count)}
     artifacts = []
     winner = None
 
@@ -188,8 +257,10 @@ def play_game(engine, restated_rules, player_count):
     player_instruction = (
         "You are an AI Player Agent playing a board game. "
         "Try to win the game without breaking the rules. "
-        "You will be given the current game state. You must respond in STRICT JSON format with two keys: "
-        "'move' (your requested action), and 'explanation' (your strategic reasoning)."
+        "You will be given the current game state and the valid moves you can make. "
+        "You must respond in STRICT JSON format with two keys: "
+        "'move' (one of the valid moves; replace any [min, max, step] field with one chosen number), "
+        "and 'explanation' (your strategic reasoning)."
     )
     
     turn_count = 0
@@ -197,15 +268,24 @@ def play_game(engine, restated_rules, player_count):
         turn_count += 1
         print(f"\n--- Turn {turn_count} ---")
         
-        for player_id in range(1, player_count + 1):
+        for player_id in range(player_count):
             print(f"Player {player_id} is thinking...")
             
-            # Prepare prompt for this specific turn
+            # Prepare prompt for this specific turn. Listing uses the authoritative
+            # global state so a translated private view cannot hide a legal move.
             state_str = str(player_states[player_id])
-            prompt = f"Rules:\n{restated_rules}\n\nCurrent State:\n{state_str}\n\nWhat is your move?"
+            valid_moves = engine.list_valid_moves(global_state, player_id)
+            prompt = (
+                f"Rules:\n{restated_rules}\n\n"
+                f"Current State:\n{state_str}\n\n"
+                f"{format_valid_moves(valid_moves)}\n\n"
+                "What is your move?"
+            )
             
             valid_move_made = False
             retries = 0
+            chosen_move = None
+            explanation = None
             
             # Request move from Player Agent
             while not valid_move_made and retries < MAX_RETRIES:
@@ -220,19 +300,27 @@ def play_game(engine, restated_rules, player_count):
                     chosen_move = data.get("move")
                     explanation = data.get("explanation")
                     
-                    # Validate move using the generated engine
-                    if engine.rule_function(global_state, chosen_move, player_id):
+                    # Accept only a move that list_valid_moves currently allows.
+                    if move_is_listed(chosen_move, valid_moves):
                         valid_move_made = True
                         print(f"  -> Valid Move: {chosen_move}")
                     else:
                         retries += 1
                         error_msg = f"That move was illegal. You have {MAX_RETRIES - retries} attempts left."
-                        prompt += f"\n\nPrevious attempt '{chosen_move}' failed. {error_msg}"
+                        valid_moves = engine.list_valid_moves(global_state, player_id)
+                        prompt += (
+                            f"\n\nPrevious attempt '{chosen_move}' failed. {error_msg}\n"
+                            f"{format_valid_moves(valid_moves)}"
+                        )
                         artifacts.append({"player": player_id, "type": "misfire", "move": chosen_move, "explanation": explanation, "state": state_str})
                         
                 except Exception as e:
                     retries += 1
-                    prompt += f"\n\nSystem Error or invalid JSON returned: {e}. Please return valid JSON."
+                    valid_moves = engine.list_valid_moves(global_state, player_id)
+                    prompt += (
+                        f"\n\nSystem Error or invalid JSON returned: {e}. Please return valid JSON.\n"
+                        f"{format_valid_moves(valid_moves)}"
+                    )
 
             # Force random move if AI fails too many times
             if not valid_move_made:
@@ -254,16 +342,16 @@ def play_game(engine, restated_rules, player_count):
             })
             
             # Update all players' perspectives using translation_function
-            for p_id in range(1, player_count + 1):
+            for p_id in range(player_count):
                 player_states[p_id] = engine.translation_function(global_state, player_states[p_id], p_id)
             
             # Check for win condition
             winner = engine.eval_function(global_state)
-            if winner:
+            if winner is not None:
                 print(f"\n[System] Player {winner} has won the game!")
                 break
                 
-    if not winner:
+    if winner is None:
         print(f"\n[System] Max turns ({MAX_TURNS}) reached. Game ended in a draw.")
         
     return artifacts, winner
