@@ -3,6 +3,7 @@ import sys
 import glob
 import re
 import json
+import importlib
 import importlib.util
 from dotenv import load_dotenv
 from google import genai
@@ -15,6 +16,9 @@ load_dotenv()
 
 try:
     client = genai.Client()
+    # Cache the service properties on the instance so unittest.mock can patch them reliably
+    #client.chats = client.chats
+    #client.models = client.models
 except Exception as e:
     print(f"Error initializing client: {e}")
     print("Make sure GEMINI_API_KEY is set in your .env file.")
@@ -160,12 +164,12 @@ def generate_game_engine(restated_rules):
         config=get_config(temperature=0.0) # 0.0 for strict code generation
     )
     
-    # Extract python code from markdown block
+    # Extract python code from markdown block and preserve trailing newline
     code = response.text
     if "```python" in code:
-        code = code.split("```python")[1].split("```")[0].strip()
+        code = code.split("```python")[1].split("```")[0].strip() + "\n"
     elif "```" in code:
-        code = code.split("```")[1].split("```")[0].strip()
+        code = code.split("```")[1].split("```")[0].strip() + "\n"
         
     # Save to local file
     with open(ENGINE_FILE, "w", encoding="utf-8") as f:
@@ -174,6 +178,11 @@ def generate_game_engine(restated_rules):
     print(f"\n[System] Game engine saved to {ENGINE_FILE}.")
     print("\n--- Generated Code Preview ---")
     print(code[:500] + "\n... (truncated)\n")
+    
+    # Clear the import caches and remove the old module to ensure a clean load
+    if "generated_engine" in sys.modules:
+        del sys.modules["generated_engine"]
+    importlib.invalidate_caches()
     
     # Dynamically import the generated code
     spec = importlib.util.spec_from_file_location("generated_engine", ENGINE_FILE)
@@ -206,11 +215,7 @@ def _number_in_range(chosen, spec):
     return abs(units - round(units)) < 1e-9
 
 def move_is_listed(chosen_move, valid_moves):
-    """True if chosen_move equals a listed move, expanding any [min, max, step] fields.
-
-    The player always returns a concrete move. A listed entry may still contain
-    ranges, and those match when every other field is equal and each number is in range.
-    """
+    """True if chosen_move equals a listed move, expanding any [min, max, step] fields."""
     if not isinstance(valid_moves, list):
         return False
     for listed in valid_moves:
@@ -231,6 +236,8 @@ def move_is_listed(chosen_move, valid_moves):
 def format_valid_moves(valid_moves):
     """Text the player agent must choose from. Ranges stay compact, not expanded."""
     rendered = json.dumps(valid_moves, indent=2, default=str)
+    # Compress 3-element numeric lists back to a single line
+    rendered = re.sub(r'\[\s+([-\d.]+),\s+([-\d.]+),\s+([-\d.]+)\s+\]', r'[\1, \2, \3]', rendered)
     return (
         "Valid moves (you must choose one of these exactly; "
         "if a field is [min, max, step], pick one number in that range, "
@@ -271,10 +278,15 @@ def play_game(engine, restated_rules, player_count):
         for player_id in range(player_count):
             print(f"Player {player_id} is thinking...")
             
+            # Fetch valid moves first to ensure the player is allowed to act
+            valid_moves = engine.list_valid_moves(global_state, player_id)
+            if not valid_moves:
+                print("  -> No valid moves available. Skipping turn.")
+                continue
+
             # Prepare prompt for this specific turn. Listing uses the authoritative
             # global state so a translated private view cannot hide a legal move.
             state_str = str(player_states[player_id])
-            valid_moves = engine.list_valid_moves(global_state, player_id)
             prompt = (
                 f"Rules:\n{restated_rules}\n\n"
                 f"Current State:\n{state_str}\n\n"
@@ -296,6 +308,7 @@ def play_game(engine, restated_rules, player_count):
                         config=get_config(system_instruction=player_instruction, json_mode=True, temperature=0.7)
                     )
                     
+                    print(f"  -> Raw AI Response: {response.text.strip()}")
                     data = json.loads(response.text)
                     chosen_move = data.get("move")
                     explanation = data.get("explanation")
@@ -303,7 +316,7 @@ def play_game(engine, restated_rules, player_count):
                     # Accept only a move that list_valid_moves currently allows.
                     if move_is_listed(chosen_move, valid_moves):
                         valid_move_made = True
-                        print(f"  -> Valid Move: {chosen_move}")
+                        print(f"  -> Valid Move Accepted: {chosen_move}")
                     else:
                         retries += 1
                         error_msg = f"That move was illegal. You have {MAX_RETRIES - retries} attempts left."
