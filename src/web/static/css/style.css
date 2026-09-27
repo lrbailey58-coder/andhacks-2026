@@ -214,9 +214,10 @@ body {
 .editor.is-submitted {
   align-self: flex-end;
   width: min(100%, 30rem);
-  background: transparent;
+  background: #1b1e2322;
   border-style: dashed;
   border-color: var(--line-soft);
+  color: black;
 }
 
 /* The same editor, used in three places, reads slightly differently.  The first
@@ -301,6 +302,24 @@ body {
   border-color: var(--line-soft);
 }
 .checkbox input:disabled:checked + .checkbox__box::after { border-color: #b9bec7; }
+
+/* The manual override on <StatusPlaying>.  It is a real button because it really
+   does something, and quiet because it is an escape hatch rather than the thing
+   the row is about: it sits after the <ShowSample> box, before the ellipses. */
+.override {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--ink-mute);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
+  padding: 0.1rem 0.35rem;
+  cursor: pointer;
+}
+.override:hover { color: var(--ink); border-color: var(--line-soft); }
+.override:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.override.is-stopping, .override:disabled { cursor: default; color: #9aa1ab; }
+.override.is-stopping:hover { color: #9aa1ab; border-color: transparent; }
 
 /* ---------------------------------------------------------------- buttons -- */
 
@@ -406,6 +425,22 @@ body {
 
 .longblock__caption { font-weight: 600; letter-spacing: 0.02em; }
 .longblock__meta { color: #a6adb8; font-variant-numeric: tabular-nums; }
+
+/* The head of a long block reports what the block is doing, not how long it is.
+   app.js flips data-typed on the body, and the head follows: "writing…" while
+   the text is still arriving, the tick and the line count once every character
+   is there.  A block that looks finished before it is finished is a block that
+   lies about the Design agent's answer having been written. */
+.longblock__state { color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+.longblock__state > * { display: none; }
+
+.longblock__head:has(+ .longblock__body .typed[data-typed="1"]) .longblock__writing { display: inline; }
+.longblock__head:has(+ .longblock__body .typed[data-typed="2"]) .result--success { display: inline; }
+.longblock__head:has(+ .longblock__body .typed[data-typed="2"]) .longblock__rows { display: inline; }
+.no-js .longblock__writing { display: none; }
+.no-js .longblock__head .result--success,
+.no-js .longblock__head .longblock__rows { display: inline; }
+.longblock__writing { color: var(--ink-mute); }
 
 .longblock__body {
   margin: 0;

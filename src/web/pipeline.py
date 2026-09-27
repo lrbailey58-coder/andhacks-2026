@@ -9,12 +9,18 @@ Which swarm the agents are is decided by the app-level switch in
 :mod:`web.app`: with it off the real backend in ``backend/`` answers, with it on
 the deterministic dummy does.  ``turn`` is called with no ``api`` by both the
 routes and the tests, so the resolver below is what both go through.
+
+Two things in here are not "call an agent and wait": the playtest, which is
+played on a worker thread so ``<ShowSample>`` can show the game while the swarm
+is still playing it, and the flag that lets the user end that playtest early.
 """
 
 from __future__ import annotations
 
+import queue
+import threading
 from types import ModuleType
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 import api_errors
 import web.ui as ui
@@ -50,6 +56,97 @@ def conversation_key(state: ui.UIState) -> str:
     """
 
     return f"{state.session}:{state.run}"
+
+
+# The playtests in flight, by run.  A playtest is started from a request and
+# finished from another one, so the button on <StatusPlaying> needs somewhere to
+# find the swarm to stop; the app keeps the UI states the same way.
+_playing: dict[str, tuple[ui.UIState, threading.Event]] = {}
+_playing_lock = threading.Lock()
+
+
+def begin_override(state: ui.UIState) -> bool:
+    """The manual override: ask the player agent swarm in this run to stop.
+
+    The playtest is not killed - a turn is already in flight and killing it
+    mid-call would be exactly the kind of sharp edge a backend should not have -
+    so a flag is set and the swarm finishes the turn it is on, then reports
+    where it got to.  That is why <SimOverride> can say the swarm is stopping
+    and the status settles afterwards: the result is honest about a game that
+    ended early, which is not the same as one that finished.
+    """
+
+    with _playing_lock:
+        entry = _playing.get(conversation_key(state))
+    if entry is None or entry[0] is not state:
+        return False
+    entry[1].set()
+    return True
+
+
+def end_override(state: ui.UIState) -> None:
+    with _playing_lock:
+        _playing.pop(conversation_key(state), None)
+
+
+def _playtest(
+    state: ui.UIState,
+    rules: str,
+    deployment: Any,
+    api: ModuleType,
+) -> Iterator[list[Patch]]:
+    """The playtest, played on a worker thread so the sample game can be shown.
+
+    The backend plays the whole game in one call, so the turns are handed to it
+    as a callback and come back one at a time; each one that arrives is put in
+    the feed immediately, which is the point of the ``<ShowSample>`` box being
+    there at all while ``<StatusPlaying>`` is still going.
+    """
+
+    records: list[dict[str, Any]] = []
+    arrived: queue.Queue[Any] = queue.Queue()
+    stop = threading.Event()
+    played: list[dict[str, Any]] = []
+
+    def report(record: dict[str, Any]) -> None:
+        arrived.put(record)
+
+    def play() -> None:
+        try:
+            played.extend(api.play_sample_game(rules, deployment, report=report, stop=stop))
+        except BaseException as error:  # noqa: BLE001 - handed to the caller
+            arrived.put(error)
+        finally:
+            # The queue is what makes the records and the return value visible to
+            # this thread: both are written before this, and read after it.
+            arrived.put(None)
+
+    end_override(state)
+    with _playing_lock:
+        _playing[conversation_key(state)] = (state, stop)
+    worker = threading.Thread(target=play, name="playtest", daemon=True)
+    worker.start()
+    try:
+        while True:
+            record = arrived.get()
+            if record is None:
+                break
+            if isinstance(record, BaseException):
+                raise record
+            records.append(record)
+            # Live: the game is still being played, so the block cannot say how it
+            # ended yet.
+            ui.store_sample(state, records, live=True)
+            yield ui.update_sample(state)
+        # The playtest is over, however it ended, so the whole of it - including a
+        # stop the reader asked for or a clock that ran out - is written down.
+        # An empty one is stored too: a ticked <ShowSample> then has to show an
+        # empty game rather than nothing at all, or the box looks like it is lying.
+        ui.store_sample(state, played or records, live=False)
+        yield ui.update_sample(state)
+    finally:
+        end_override(state)
+        worker.join(timeout=0.1)
 
 
 def turn(
@@ -125,13 +222,10 @@ def turn(
     # -- playing --------------------------------------------------------------
     yield ui.show_status(state, ui.STATUS_PLAYING)
     try:
-        sample = api.play_sample_game(rules, deployment)
+        yield from _playtest(state, rules, deployment, api)
     except api_errors.BackendUnavailable as unavailable:
         yield from _failed(state, str(unavailable))
         return
-    ui.store_sample(state, sample)
-    if state.show_sample:
-        yield ui.show_sample(state)
     yield [ui.ping(state, "play_complete")]
 
     # -- collecting -----------------------------------------------------------

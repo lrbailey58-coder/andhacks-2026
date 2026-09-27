@@ -15,7 +15,7 @@ from google.genai import types
 load_dotenv()
 
 try:
-    client = genai.Client()
+    client = genai.Client(api_key="GEMINI_API_KEY")
     # Cache the service properties on the instance so unittest.mock can patch them reliably
     #client.chats = client.chats
     #client.models = client.models
@@ -26,8 +26,8 @@ except Exception as e:
 
 # Model definitions based on optimal roles
 RULES_MODEL = "gemini-3.1-pro-preview"
-DESIGN_MODEL = "gemini-3.1-pro-preview"
-PLAYER_MODEL = "gemini-2.5-flash"
+DESIGN_MODEL = "gemini-2.5-flash"
+PLAYER_MODEL = "gemini-2.5-flash-lite"
 
 MAX_TURNS = 150
 MAX_RETRIES = 3

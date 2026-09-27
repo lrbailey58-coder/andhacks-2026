@@ -17,11 +17,13 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sys
 import threading
 from itertools import chain
 from types import ModuleType
 from typing import Any, Iterator
 
+from dotenv import dotenv_values, find_dotenv
 from flask import Flask, Response, request
 
 import api_errors
@@ -80,6 +82,8 @@ def get_session(session_id: str | None) -> ui.UIState | None:
 def reset_sessions() -> None:
     with _lock:
         _sessions.clear()
+    with pipeline._playing_lock:
+        pipeline._playing.clear()
 
 
 def _session() -> ui.UIState | None:
@@ -219,9 +223,103 @@ def api_toggle() -> Response:
     return stream(iter([patches]))
 
 
+@app.post("/api/override")
+def api_override() -> Response:
+    """<SimOverride>: end the player agent simulation before it finishes.
+
+    The answer is streamed like everything else, because the status has to end
+    with a ``<Result>`` and the game has to say it was cut short - the turn in
+    progress is still coming back from the swarm, and pretending otherwise
+    would be a lie the feed then repeats.
+    """
+
+    state = _session()
+    if state is None:
+        return Response('{"error":"no session"}', status=400, mimetype="application/json")
+    if not pipeline.begin_override(state):
+        return Response(
+            '{"error":"no simulation is running"}',
+            status=409,
+            mimetype="application/json",
+        )
+    return stream(iter([[]]))
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok", "scenarios": "complete, vague, unstable"}
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+
+def key_report() -> dict[str, Any]:
+    """Where the Gemini key came from, or that it was never found.
+
+    A place and never a value, because this is printed into browser consoles.
+    The ``.env`` is read as well as the environment, and read first: once the
+    real backend has been imported ``load_dotenv`` has put the file's key into the
+    environment as well, and a teammate looking at "environment" would go
+    hunting through their shell for something they never typed.
+
+    Reading the file directly is also what makes the answer right before the
+    first run - a key sitting in a ``.env`` the server never found would
+    otherwise be reported as no key at all, the opposite of the truth, and a long
+    way from obvious.
+    """
+
+    dotenv = find_dotenv()
+    filed = dotenv_values(dotenv).get("GEMINI_API_KEY") if dotenv else None
+    if filed:
+        return {"key_found": True, "key_source": "dotenv", "dotenv": dotenv}
+    if os.environ.get("GEMINI_API_KEY"):
+        return {"key_found": True, "key_source": "environment", "dotenv": dotenv}
+    return {
+        "key_found": False,
+        "key_source": "missing",
+        "dotenv": dotenv,
+        "hint": (
+            "GEMINI_API_KEY is in neither the environment the server was started "
+            f"in nor {dotenv or 'a .env file anywhere above the server'}"
+        ),
+    }
+
+
+@app.get("/api/diagnostics")
+def api_diagnostics() -> dict[str, Any]:
+    """What the server knows about the model calls behind this page.
+
+    The page's console asks for this whenever a request fails, and a teammate
+    can open it directly when the page shows them nothing to read.  It answers
+    the three questions behind nearly every "I cannot reach Gemini" report:
+    which API is switched on, whether a key was found and where it came from,
+    and what the recent calls actually returned - status code included, which is
+    what separates a refused key from a spent quota from a model name that does
+    not exist.
+    """
+
+    # The real backend is read out of the module table rather than imported: a
+    # page that has not run a turn yet should be able to ask this without the
+    # answer loading a model client first.
+    swarm = sys.modules.get("backend.swarm")
+    return {
+        "api": "dummy" if USE_DUMMY_API else "real",
+        "client_built": bool(getattr(swarm, "_CLIENT", None)),
+        "models": (
+            {
+                "rules": swarm.RULES_MODEL,
+                "design": swarm.DESIGN_MODEL,
+                "player": swarm.PLAYER_MODEL,
+            }
+            if swarm is not None
+            else None
+        ),
+        "calls": [call.as_dict() for call in api_errors.calls()],
+        "failures": len(api_errors.failures()),
+        **key_report(),
+    }
 
 
 def main() -> None:

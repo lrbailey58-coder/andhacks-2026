@@ -47,6 +47,12 @@ COMPONENT_FOLLOWUP = "Followup"
 # of its own, needed for "the code and sample game appear in adjacent columns".
 COMPONENT_COLUMNS = "Columns"
 
+# Also not in the spec's component list, and not part of the flow: the manual
+# override that sits inside <StatusPlaying> so the user can end the player
+# simulation before the backend is finished with it.  It is the one interactive
+# thing in a row of statuses, and it only exists while the swarm is playing.
+COMPONENT_SIM_OVERRIDE = "SimOverride"
+
 STATUS_INTERPRETING = "interpreting"
 STATUS_CODING = "coding"
 STATUS_DEPLOYING = "deploying"
@@ -145,6 +151,10 @@ CODE_DOWNLOAD_NAME = "generated_engine.py"
 SAMPLE_DOWNLOAD_NAME = "sample_game.txt"
 RESPONSE_DOWNLOAD_NAME = "design_feedback.md"
 
+OVERRIDE_LABEL = "End the simulation now"
+OVERRIDE_RUNNING_LABEL = "Stopping the swarm…"
+OVERRIDE_DONE_LABEL = "Simulation ended early"
+
 LONG_BLOCK_LANGUAGE = {"code": "python"}
 
 
@@ -242,6 +252,9 @@ class UIState:
     review_sample: bool = False
     code: str | None = None
     sample: list[dict[str, Any]] | None = None
+    #: Whether the playtest that fills ``sample`` is still going.  While it is, how
+    #: the game ends is not known, so the block does not say.
+    sample_live: bool = False
     prompt: str = ""
     files: list[str] = field(default_factory=list)
     question: str | None = None
@@ -517,13 +530,6 @@ def status_entry(state: UIState, kind: str, **props: Any) -> Entry:
             **props,
         },
     )
-    entry.add(
-        Entry(
-            id=state.next_id("ellipses"),
-            component=COMPONENT_ELLIPSES,
-            props={"text": "...", "bounce": True, "dots": 3},
-        )
-    )
     if kind == STATUS_PLAYING:
         # "<StatusPlaying> appears eventually alongside an unchecked <ShowSample>"
         entry.add(
@@ -540,11 +546,73 @@ def status_entry(state: UIState, kind: str, **props: Any) -> Entry:
                 },
             )
         )
+        # And the manual override, which is the user's way of ending the player
+        # simulation before the backend is finished with it.  Both of these sit
+        # between the message and the <Ellipses>, because the ellipses belong to
+        # the message and it should read as one thing: "Herding player agent
+        # swarm  [ ] Show sample game  [End the simulation now]  ...".
+        entry.add(
+            Entry(
+                id=state.next_id("override"),
+                component=COMPONENT_SIM_OVERRIDE,
+                props={
+                    "label": OVERRIDE_LABEL,
+                    "context": "playing",
+                    "run": state.run,
+                    "disabled": False,
+                },
+            )
+        )
+    entry.add(
+        Entry(
+            id=state.next_id("ellipses"),
+            component=COMPONENT_ELLIPSES,
+            props={"text": "...", "bounce": True, "dots": 3},
+        )
+    )
     return entry
 
 
+def running_statuses(state: UIState) -> list[Entry]:
+    """Every status still in progress, in feed order."""
+
+    return [
+        entry
+        for entry in state.entries
+        if entry.props.get("running")
+        and entry.component in (*STATUS_COMPONENTS.values(), COMPONENT_STATUS_QUESTION)
+    ]
+
+
+def settle(state: UIState, entry: Entry, value: str) -> Patch:
+    """Close one running status: its ``<Ellipses>`` becomes a ``<Result>``.
+
+    There is one of these because a step finishes in three ways - the next one
+    starts, the API reports a result of its own, or the run fails - and all
+    three have to leave the same thing behind, in the same place.  The manual
+    override goes with it: there is nothing left to override once the swarm has
+    stopped.
+    """
+
+    entry.props["running"] = False
+    override = entry.first(COMPONENT_SIM_OVERRIDE)
+    if override is not None:
+        entry.children.remove(override)
+    result = Entry(
+        id=state.next_id("result"),
+        component=COMPONENT_RESULT,
+        props={"value": value, "mark": RESULT_MARKS[value]},
+    )
+    ellipses = entry.first(COMPONENT_ELLIPSES)
+    if ellipses is None:
+        entry.add(result)
+    else:
+        entry.children[entry.children.index(ellipses)] = result
+    return update_patch(entry)
+
+
 def resolve_statuses(state: UIState) -> list[Patch]:
-    """Replace the ``<Ellipses>`` of every running ``<Status>`` with a ``<Result>``.
+    """Settle every status still running, as a success.
 
     "When a ``<Status>`` is shown, all ``<Ellipses>`` components from previous
     statuses are replaced by ``<Result>`` with a default value of 'success'."
@@ -552,26 +620,7 @@ def resolve_statuses(state: UIState) -> list[Patch]:
     status the API explicitly reported as a failure keeps its cross.
     """
 
-    patches: list[Patch] = []
-    for entry in list(state.entries):
-        if not entry.props.get("running") or entry.component not in (
-            *STATUS_COMPONENTS.values(),
-            COMPONENT_STATUS_QUESTION,
-        ):
-            continue
-        ellipses = entry.first(COMPONENT_ELLIPSES)
-        if ellipses is None:
-            continue
-        index = entry.children.index(ellipses)
-        entry.props["running"] = False
-        result = Entry(
-            id=state.next_id("result"),
-            component=COMPONENT_RESULT,
-            props={"value": RESULT_SUCCESS, "mark": RESULT_MARKS[RESULT_SUCCESS]},
-        )
-        entry.children[index] = result
-        patches.append(update_patch(entry))
-    return patches
+    return [settle(state, entry, RESULT_SUCCESS) for entry in running_statuses(state)]
 
 
 # ---------------------------------------------------------------------------
@@ -635,19 +684,7 @@ def show_result(
     )
     if entry is None:
         raise UIError(f"no {component} to report a result for")
-    ellipses = entry.first(COMPONENT_ELLIPSES)
-    index = entry.children.index(ellipses) if ellipses else len(entry.children)
-    entry.props["running"] = False
-    result = Entry(
-        id=state.next_id("result"),
-        component=COMPONENT_RESULT,
-        props={"value": value, "mark": RESULT_MARKS[value]},
-    )
-    if ellipses is not None:
-        entry.children[index] = result
-    else:
-        entry.add(result)
-    return update_patch(entry)
+    return settle(state, entry, value)
 
 
 def show_question(state: UIState, text: str) -> list[Patch]:
@@ -704,39 +741,72 @@ def _code_block(state: UIState, entry_id: str) -> Entry:
 def _sample_block(state: UIState, entry_id: str) -> Entry:
     if state.sample is None:
         raise UIError("the sample game is not available yet")
-    lines = sample_transcript(state.sample)
+    playing = state.status(STATUS_PLAYING)
+    live = bool(playing is not None and playing.props.get("running"))
+    lines = sample_transcript(state.sample, live=state.sample_live)
+    text = "\n".join(lines)
     return Entry(
         id=entry_id,
         component=COMPONENT_LONG_BLOCK,
         props={
             "variant": "sample",
-            "text": "\n".join(lines),
+            "text": text,
             "lines": lines,
             "caption": "Sample game: player agent swarm",
+            # Still being played: the block grows a turn at a time, and the head
+            # says so rather than looking like a finished game.
+            "live": live,
             "buttons": ["copy", "download"],
             "download_name": SAMPLE_DOWNLOAD_NAME,
-            "typing": typing_plan("\n".join(lines)),
+            "typing": typing_plan(text),
             "rows": len(lines),
-            "pending": False,
         },
     )
 
 
-def sample_transcript(sample: Sequence[dict[str, Any]]) -> list[str]:
-    """The player agent swarm reasoning through the game, turn by turn."""
+def _readable_move(move: Any) -> str:
+    """A move as a reader wants it.
+
+    The engine's own moves are whatever its rules made them, and a generated
+    engine hands back dictionaries, so they are rendered field by field rather
+    than as a repr.
+    """
+
+    if move is None:
+        return "(no move)"
+    if isinstance(move, dict):
+        if not move:
+            return "(empty move)"
+        return ", ".join(f"{key} {move[key]}" for key in move)
+    if isinstance(move, (list, tuple)):
+        return "(" + ", ".join(str(item) for item in move) + ")"
+    return str(move)
+
+
+def sample_transcript(sample: Sequence[dict[str, Any]], live: bool = False) -> list[str]:
+    """The player agent swarm reasoning through the game, turn by turn.
+
+    ``live`` says the game is still being played, and then how it ends is not
+    known - so it is not written down.  Announcing "Game over." after the first
+    turn, and then taking it back as the next turn arrives, is a claim the page
+    cannot keep.
+    """
 
     lines: list[str] = []
     for record in sample:
         head = f"Turn {record['turn']} · Player {record['player']}"
+        move = _readable_move(record.get("move"))
         if record.get("illegal"):
-            lines.append(f"{head} — rejected: {record['move']}")
-            lines.append(f"    {record['explanation']}")
-            continue
-        lines.append(f"{head} — plays {record['move']}")
-        lines.append(f"    {record['explanation']}")
-    if sample:
+            lines.append(f"{head} — rejected: {move}")
+        else:
+            lines.append(f"{head} — plays {move}")
+        explanation = (record.get("explanation") or "").strip()
+        if explanation:
+            lines.append(f"    {explanation}")
+    if sample and not live:
+        outcome = str(sample[-1].get("outcome") or "Game over.")
         lines.append("")
-        lines.append(str(sample[-1].get("outcome", "Game over.")))
+        lines.append(outcome)
     return lines
 
 
@@ -746,8 +816,11 @@ def store_code(state: UIState, code: str) -> None:
     state.code = code
 
 
-def store_sample(state: UIState, sample: Sequence[dict[str, Any]]) -> None:
+def store_sample(state: UIState, sample: Sequence[dict[str, Any]], live: bool = False) -> None:
+    """The playtest so far.  ``live`` says it is still being played."""
+
     state.sample = [dict(record) for record in sample]
+    state.sample_live = live
 
 
 def insert_after(state: UIState, entry: Entry, after_id: str | None) -> int:
@@ -785,6 +858,26 @@ def show_sample(state: UIState) -> list[Patch]:
     block = _sample_block(state, entry_id)
     index = insert_after(state, block, _anchor(state, STATUS_PLAYING))
     return [insert_patch(index, block)]
+
+
+def update_sample(state: UIState) -> list[Patch]:
+    """The sample game as the swarm plays it: one call per turn that arrives.
+
+    The block is put in the feed with the first turn and replaced as the rest
+    come in, so a reader watching ``<StatusPlaying>`` watches the game.  Nothing
+    happens unless ``<ShowSample>`` asked for the block: an unticked box means
+    the turns are still collected - the Design agent wants them - but not shown.
+    """
+
+    if not state.show_sample or state.sample is None:
+        return []
+    entry_id = f"sample-{state.run}"
+    if state.find(entry_id) is None:
+        # Asked for part way through, so the game starts from where it is.
+        return show_sample(state)
+    block = _sample_block(state, entry_id)
+    state.entries[state.index_of(entry_id)] = block
+    return [update_patch(block)]
 
 
 def _anchor(state: UIState, kind: str) -> str | None:
@@ -1058,27 +1151,7 @@ def ping(state: UIState, reason: str) -> Patch:
 def show_failure(state: UIState, message: str) -> list[Patch]:
     """A ``<Result>`` of "failure" plus recovery: the user can try again."""
 
-    patches: list[Patch] = []
-    running = [
-        entry
-        for entry in state.entries
-        if entry.props.get("running")
-        and entry.component in (*STATUS_COMPONENTS.values(), COMPONENT_STATUS_QUESTION)
-    ]
-    for entry in running:
-        ellipses = entry.first(COMPONENT_ELLIPSES)
-        index = entry.children.index(ellipses) if ellipses else len(entry.children)
-        entry.props["running"] = False
-        result = Entry(
-            id=state.next_id("result"),
-            component=COMPONENT_RESULT,
-            props={"value": RESULT_FAILURE, "mark": RESULT_MARKS[RESULT_FAILURE]},
-        )
-        if ellipses is not None:
-            entry.children[index] = result
-        else:
-            entry.add(result)
-        patches.append(update_patch(entry))
+    patches = [settle(state, entry, RESULT_FAILURE) for entry in running_statuses(state)]
     state.failures.append(message)
     state.finished = True
     patches.append(ping(state, "task_failed"))

@@ -35,14 +35,17 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 import types
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
 
+import api_errors
 from api_errors import BackendUnavailable
 
 # ---------------------------------------------------------------------------
@@ -50,11 +53,18 @@ from api_errors import BackendUnavailable
 # ---------------------------------------------------------------------------
 
 RULES_MODEL = "gemini-3.1-pro-preview"
-DESIGN_MODEL = "gemini-3.1-pro-preview"
-PLAYER_MODEL = "gemini-2.5-flash"
+DESIGN_MODEL = "gemini-2.5-flash"
+PLAYER_MODEL = "gemini-2.5-flash-lite"
 
 MAX_TURNS = 150
 MAX_RETRIES = 3
+
+# Wall clock for one playtest, in seconds.  A playtest is a swarm of agents each
+# asking a model for a move, so it is bounded in time and not only in turns:
+# 150 turns of a slow model is half an hour of a browser spinner.  Checked between
+# player actions by :func:`play_game`, which reports a game cut short this way as
+# such - a timeout is a fact about the playtest, not a win for anybody.
+MAX_PLAY_SECONDS = 300.0
 
 #: The generated engine is a module, not a file, so the name is only ever the
 #: label a traceback carries.
@@ -72,13 +82,16 @@ def get_client() -> Any:
 
     global _CLIENT
     if _CLIENT is None:
+        started = time.monotonic()
         try:
             _CLIENT = genai.Client()
         except Exception as problem:
+            api_errors.record("client", False, time.monotonic() - started, problem)
             raise BackendUnavailable(
                 f"the Gemini client could not be started ({problem}); "
                 "GEMINI_API_KEY may be missing"
             ) from problem
+        api_errors.record("client", True, time.monotonic() - started)
     return _CLIENT
 
 
@@ -122,21 +135,26 @@ def generate(
 ) -> str:
     """One completion, as text.  Anything that goes wrong is a lost service."""
 
+    started = time.monotonic()
     try:
-        return get_client().models.generate_content(
+        text = get_client().models.generate_content(
             model=model, contents=contents, config=config
         ).text
     except BackendUnavailable:
         raise
     except Exception as problem:
+        api_errors.record(model, False, time.monotonic() - started, problem)
         raise BackendUnavailable(f"{model} did not answer ({problem})") from problem
+    api_errors.record(model, True, time.monotonic() - started)
+    return text
 
 
 def open_chat(model: str, system_instruction: str, temperature: float) -> Any:
     """Start a chat session with its own system instruction."""
 
+    started = time.monotonic()
     try:
-        return get_client().chats.create(
+        chat = get_client().chats.create(
             model=model,
             config=get_config(
                 system_instruction=system_instruction, temperature=temperature
@@ -145,20 +163,29 @@ def open_chat(model: str, system_instruction: str, temperature: float) -> Any:
     except BackendUnavailable:
         raise
     except Exception as problem:
+        api_errors.record(model, False, time.monotonic() - started, problem)
         raise BackendUnavailable(
             f"{model} could not be reached ({problem})"
         ) from problem
+    api_errors.record(model, True, time.monotonic() - started)
+    return chat
 
 
 def reply(chat: Any, message: str) -> str:
     """The next thing the agent says, as text."""
 
+    started = time.monotonic()
     try:
-        return chat.send_message(message).text
+        text = chat.send_message(message).text
     except BackendUnavailable:
         raise
     except Exception as problem:
+        api_errors.record("chat", False, time.monotonic() - started, problem)
         raise BackendUnavailable(f"the agent lost service ({problem})") from problem
+    # The chat has already been logged as a model when it was opened, so this is
+    # recorded as a turn of the same conversation rather than a second model.
+    api_errors.record("chat", True, time.monotonic() - started)
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -509,12 +536,25 @@ class PlayerAgent:
 
 
 def play_game(
-    engine: types.ModuleType, rules: str, players: Sequence[PlayerAgent]
+    engine: types.ModuleType,
+    rules: str,
+    players: Sequence[PlayerAgent],
+    report: Callable[[dict[str, Any]], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> tuple[list[dict[str, Any]], int | None]:
     """The player agents playing the generated game, and everything they tried.
 
     Player IDs are 0-based throughout, exactly as the generated engine counts
     them.
+
+    Two things end the game besides somebody winning it: :data:`MAX_PLAY_SECONDS`
+    of wall clock, and ``stop`` being set, which is how the manual override on
+    ``<StatusPlaying>`` asks for the swarm to stop.  Both are checked between
+    player actions and both are counted - a turn in flight is always finished and
+    recorded, because dropping it would leave the game state and the log
+    disagreeing, which is the one thing a playtest log must never do.  A game cut
+    short reports why, so ``None`` for a winner never means "the players
+    cooperated to stalemate" by accident.
     """
 
     player_count = len(players)
@@ -522,10 +562,12 @@ def play_game(
     player_states = {player.player_id: global_state for player in players}
     artifacts: list[dict[str, Any]] = []
     winner: int | None = None
+    deadline = time.monotonic() + MAX_PLAY_SECONDS
 
     turn_count = 0
     while winner is None and turn_count < MAX_TURNS:
         turn_count += 1
+        stopped = False
 
         for player in players:
             valid_moves = engine.list_valid_moves(global_state, player.player_id)
@@ -540,28 +582,31 @@ def play_game(
             decision = player.act(engine, rules, turn)
 
             for misfire in decision.misfires:
-                artifacts.append(
-                    {
-                        "player": player.player_id,
-                        "type": "misfire",
-                        "move": misfire.move,
-                        "explanation": misfire.explanation,
-                        "state": turn.view,
-                    }
-                )
+                record = {
+                    "player": player.player_id,
+                    "type": "misfire",
+                    "move": misfire.move,
+                    "explanation": misfire.explanation,
+                    "state": turn.view,
+                }
+                artifacts.append(record)
+                if report is not None:
+                    report(record)
 
             global_state = engine.execution_function(
                 global_state, decision.move, player.player_id
             )
-            artifacts.append(
-                {
-                    "player": player.player_id,
-                    "type": "turn",
-                    "move": decision.move,
-                    "explanation": decision.explanation,
-                    "state": turn.view,
-                }
-            )
+            record = {
+                "player": player.player_id,
+                "type": "turn",
+                "turn": turn_count,
+                "move": decision.move,
+                "explanation": decision.explanation,
+                "state": turn.view,
+            }
+            artifacts.append(record)
+            if report is not None:
+                report(record)
 
             for player_id in player_states:
                 player_states[player_id] = engine.translation_function(
@@ -571,6 +616,22 @@ def play_game(
             winner = engine.eval_function(global_state)
             if winner is not None:
                 break
+
+            # Between one player's action and the next, not between rounds: an
+            # override pressed part way through a round is answered after the
+            # player whose turn it is has been recorded, and the wall clock keeps
+            # the same promise.
+            if stop is not None and stop.is_set():
+                artifacts.append({"player": None, "type": "stop", "reason": "override"})
+                stopped = True
+                break
+            if time.monotonic() >= deadline:
+                artifacts.append({"player": None, "type": "stop", "reason": "timeout"})
+                stopped = True
+                break
+
+        if winner is not None or stopped:
+            break
 
     return artifacts, winner
 

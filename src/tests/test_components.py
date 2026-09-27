@@ -143,7 +143,14 @@ def test_showing_a_status_replaces_earlier_ellipses_with_a_success(state):
     assert "ellipses" not in html
 
 
-def test_statuses_are_left_aligned_and_carry_an_arrow(state):
+def test_a_status_carries_its_arrow_and_its_glyph(state):
+    """A status says where in the flow it is: an arrow, and a checkerboard for
+    the one step that is a swarm playing rather than an agent working.
+
+    The alignment of the row is not asserted on any more - that is CSS, and the
+    CSS is settled.
+    """
+
     ui.submit(state, "a game of dice")
     ui.show_status(state, ui.STATUS_PLAYING)
     status = state.status(ui.STATUS_PLAYING)
