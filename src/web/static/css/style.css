@@ -1,0 +1,515 @@
+/*
+  Style notes, straight from the brief:
+    DOs  - grid patterns, small assorted arrows, curved lines where the flow
+          changes direction, readable (never thin, never ostentatious) type,
+          the same component looking subtly different per context, smooth and
+          simple motion, and no accidental gaps in the vertical flow.
+    DONTs - no gradients anywhere (the page grid is an inline SVG, not a
+          gradient), no fullscreen animation, no exotic flow, no thin or
+          showy fonts.  All text stays selectable.
+*/
+
+:root {
+  --ink: #1b1e23;
+  --ink-soft: #4a515c;
+  --ink-mute: #6a7280;
+  --line: #d9dce1;
+  --line-soft: #e8eaee;
+  --paper: #fcfcfb;
+  --card: #ffffff;
+  --good: #2f7a4d;
+  --bad: #a33a3a;
+  --focus: #3b6ea5;
+
+  --font: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+    Arial, sans-serif;
+  --mono: "SFMono-Regular", "Cascadia Mono", "JetBrains Mono", Consolas,
+    "Liberation Mono", monospace;
+
+  --step: 0.85rem;          /* status size: a whisper above body text */
+  --gap: 0.8rem;            /* the vertical rhythm of the feed */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --feed-width: 64rem;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background-color: var(--paper);
+  /* A grid pattern, drawn as SVG so no gradient is involved. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28'%3E%3Cpath d='M28 .5H0M.5 0v28' fill='none' stroke='%231b1e23' stroke-opacity='.05'/%3E%3C/svg%3E");
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.6;
+  background-repeat: repeat;
+  -webkit-font-smoothing: antialiased;
+  /* The document scrolls, and it is the only thing that does.  One scrollbar for
+     the whole page, so nothing appearing in the feed can give the page a box of
+     its own to scroll inside - which is what a fixed height wrapper does, and
+     which is where the layout trouble came from. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+}
+
+/* ------------------------------------------------------------------ feed --
+   "The feed takes up most of the screen horizontally, but not all", begins
+   centered vertically and horizontally, and scrolls once it outgrows the page.
+   The centring is auto margins on the feed, inside a page that is at least a
+   screen tall: while the feed is shorter than the page the free space is shared
+   above and below it, and the moment it is longer there is no free space to
+   share and the feed simply runs off the bottom.  Nothing reserves that free
+   space inside the feed, so no amount of content appearing or disappearing can
+   leave a page's worth of blank at the end of it. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.feed {
+  flex: none;
+  margin-block: auto;
+  width: min(100% - 3rem, var(--feed-width));
+  margin-inline: auto;
+  padding-block: 3rem 4rem;
+}
+
+.feed__inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  width: 100%;
+}
+
+.feed__inner > * { min-width: 0; }
+
+/* Long blocks cover the feed horizontally. */
+.longblock,
+.columns,
+.editor--wide,
+.followup { width: 100%; }
+
+/* ----------------------------------------------------------------- title -- */
+
+.title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: clamp(1.9rem, 5.5vw, 3.1rem);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin-bottom: 0.6rem;
+}
+
+.title__lead { color: var(--ink); }
+.title__arrow { color: var(--ink-mute); font-size: 0.55em; }
+
+.multiword {
+  position: relative;
+  display: inline-grid;
+  overflow: hidden;
+  height: 1.15em;
+  vertical-align: bottom;
+  color: var(--ink-soft);
+}
+
+/* One word scrolls down and fades out, the next scrolls in. */
+.multiword__word {
+  grid-area: 1 / 1;
+  display: block;
+  animation: word-cycle 2.6s var(--ease) infinite;
+  will-change: transform, opacity;
+}
+
+.multiword--pinned .multiword__word { animation: none; color: var(--ink); }
+
+/* The word fades in, sits, then fades out into the next one.  The last frame
+   is where the first one starts, so restarting the cycle mid-flight (which is
+   how the word is swapped) never snaps the word back into place. */
+@keyframes word-cycle {
+  0%   { transform: translateY(0);      opacity: 0; }
+  12%  { transform: translateY(0);      opacity: 1; }
+  62%  { transform: translateY(0);      opacity: 1; }
+  92%  { transform: translateY(-1.05em); opacity: 0; }
+  100% { transform: translateY(-1.05em); opacity: 0; }
+}
+
+/* Collapsed to the left once the prompt is submitted. */
+.title--collapsed {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin-bottom: 0;
+  color: var(--ink-soft);
+}
+
+.title--collapsed .title__lead::after { content: ":"; }
+
+/* ---------------------------------------------------------- prompt editor -- */
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.7rem 0.8rem;
+  transition: width 320ms var(--ease), align-self 320ms var(--ease),
+    background-color 320ms var(--ease), border-color 200ms var(--ease);
+}
+
+.editor:focus-within { border-color: var(--focus); }
+.editor--drop { border-color: var(--focus); background: #f6f9fc; }
+
+.editor__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.editor__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: vertical;
+  border: 0;
+  padding: 0.35rem 0.2rem;
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+}
+
+.editor__input:focus { outline: none; }
+.editor__input::placeholder { color: #9aa1ab; }
+
+.editor__hint,
+.editor__sent {
+  margin: 0;
+  color: var(--ink-mute);
+  font-size: 0.8rem;
+}
+
+.editor__foot { display: flex; justify-content: flex-end; }
+.editor__hint { margin-right: auto; }
+
+.editor__sent {
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px dashed var(--line-soft);
+  padding-top: 0.5rem;
+  color: var(--ink-soft);
+}
+
+/* Submitted: slides to a right alignment, narrow, with copy and download. */
+.editor.is-submitted {
+  align-self: flex-end;
+  width: min(100%, 30rem);
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line-soft);
+}
+
+/* The same editor, used in three places, reads slightly differently.  The first
+   one is the tallest, and stays a box: it is asked for a whole prompt. */
+.editor--primary .editor__input { min-height: 3rem; }
+
+/* A question is answered in a sentence, so it is one line that grows to fit
+   (app.js keeps the height on the text), and nothing to drag with. */
+.editor--question { border-color: var(--line); }
+.editor--question .editor__input {
+  min-height: 0;
+  overflow-y: hidden;
+  resize: none;
+}
+.editor--next { border-color: var(--line); }
+.editor--next .editor__input { min-height: 2.25rem; }
+
+/* --------------------------------------------------------------- checkbox -- */
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.checkbox input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.checkbox__box {
+  width: 1rem;
+  height: 1rem;
+  border: 1.5px solid var(--line);
+  border-radius: 4px;
+  background: var(--card);
+  display: inline-block;
+  position: relative;
+  transition: background-color 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.checkbox input:checked + .checkbox__box {
+  background: var(--ink-soft);
+  border-color: var(--ink-soft);
+}
+
+.checkbox input:checked + .checkbox__box::after {
+  content: "";
+  position: absolute;
+  inset: 2px 3px 4px 2px;
+  border: solid var(--card);
+  border-width: 0 0 2px 2px;
+  transform: rotate(-45deg);
+}
+
+.checkbox input:focus-visible + .checkbox__box { outline: 2px solid var(--focus); outline-offset: 2px; }
+.checkbox:hover .checkbox__label { color: var(--ink); }
+
+/* The same checkbox, used in three places, reads slightly differently. */
+.checkbox--editor { align-self: center; padding-top: 0.35rem; }
+.checkbox--playing { margin-left: auto; font-size: 0.8rem; color: var(--ink-mute); }
+.checkbox--final { font-size: 0.9rem; }
+
+/* Retired: still readable, still in the flow, but plainly not a question any
+   more.  Only the box goes quiet - the label stays legible. */
+.checkbox--off { color: #9aa1ab; cursor: default; }
+.checkbox--off:hover .checkbox__label { color: inherit; }
+.checkbox input:disabled + .checkbox__box {
+  background: var(--paper);
+  border-color: var(--line-soft);
+  box-shadow: none;
+}
+.checkbox input:disabled:checked + .checkbox__box {
+  background: var(--line-soft);
+  border-color: var(--line-soft);
+}
+.checkbox input:disabled:checked + .checkbox__box::after { border-color: #b9bec7; }
+
+/* ---------------------------------------------------------------- buttons -- */
+
+.buttons { display: inline-flex; gap: 0.35rem; }
+
+.button {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease),
+    background-color 140ms var(--ease);
+}
+
+.button:hover { color: var(--ink); border-color: var(--ink-mute); }
+.button:active { background: var(--line-soft); }
+.button.is-done { color: var(--good); border-color: var(--good); }
+
+/* ----------------------------------------------------------------- status -- */
+
+.status { align-self: flex-start; max-width: 100%; color: var(--ink-mute); }
+.status--curved { position: relative; }
+
+.status__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: var(--step);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+}
+
+.status__arrow { color: #a6adb8; font-size: 0.9em; }
+.status__label { color: var(--ink-mute); }
+
+/* A question is the user reading something, so it gets body text and a curve. */
+.status--curved .status__question {
+  color: var(--ink);
+  font-size: 0.95rem;
+  max-width: 46rem;
+}
+
+.status--curved .editor { margin-top: 0.6rem; }
+
+.curve { color: var(--line); display: block; margin-bottom: 0.15rem; }
+.status--curved .curve { color: #c3c9d2; }
+.glyph--checkerboard { color: var(--ink-mute); flex: none; }
+
+.status__state { display: inline-flex; align-items: center; gap: 0.1rem; }
+
+/* --------------------------------------------------------------- ellipses -- */
+
+.ellipses { display: inline-flex; gap: 0.02em; color: #b0b7c1; }
+
+.ellipses__dot {
+  display: inline-block;
+  animation: dot-bounce 1.1s var(--ease) infinite;
+  animation-delay: calc(var(--i) * 140ms);
+}
+
+@keyframes dot-bounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-0.28em); }
+}
+
+/* ----------------------------------------------------------------- result -- */
+
+.result { font-size: 1em; line-height: 1; }
+.result--success { color: var(--good); }
+.result--failure { color: var(--bad); }
+
+/* ------------------------------------------------------------- long block -- */
+
+.longblock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.8rem 0.9rem;
+}
+
+.longblock--code { background: #fcfcfb; }
+
+.longblock__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.78rem;
+  color: var(--ink-mute);
+  border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 0.4rem;
+}
+
+.longblock__caption { font-weight: 600; letter-spacing: 0.02em; }
+.longblock__meta { color: #a6adb8; font-variant-numeric: tabular-nums; }
+
+.longblock__body {
+  margin: 0;
+  max-height: 18rem;
+  overflow: auto;
+  font-family: var(--font);
+  font-size: 0.92rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+  tab-size: 4;
+}
+
+/* An empty block is one line: no head, no body to scroll, no buttons. */
+.longblock--empty {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line-soft);
+  padding: 0.55rem 0.9rem;
+}
+
+.longblock--empty .longblock__caption { color: var(--ink-mute); }
+
+.longblock--code .longblock__body {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  background: transparent;
+}
+
+.longblock__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 0.5rem;
+}
+
+.longblock--sample .longblock__body { color: var(--ink-soft); }
+.longblock--response .curve { color: #c3c9d2; }
+
+/* The typing cursor only exists while the block is being typed out. */
+.typed { position: relative; }
+.typed[data-typed="1"]::after {
+  content: "";
+  display: inline-block;
+  width: 0.5ch;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--ink-mute);
+  animation: caret 1s steps(1) infinite;
+}
+
+@keyframes caret { 50% { opacity: 0; } }
+
+/* Without JavaScript the text is simply there. */
+.no-js .typed { visibility: visible; }
+.js .typed[data-typed="0"] { visibility: hidden; }
+
+/* --------------------------------------------------------------- columns -- */
+
+/* "If both are checked, the code and sample game appear in adjacent columns,
+   similar to an online code debugger." */
+.columns {
+  display: grid;
+  gap: var(--gap);
+  align-items: start;
+}
+
+.columns--1 { grid-template-columns: minmax(0, 1fr); }
+.columns--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+/* An empty group has nothing to say, so it is not laid out at all and leaves no
+   gap in the feed.  ``display: grid`` above would otherwise beat the browser's
+   own rule for ``[hidden]``. */
+.columns[hidden] { display: none; }
+
+@media (max-width: 62rem) {
+  .columns--2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* -------------------------------------------------------------- followup -- */
+
+.followup { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; }
+
+.followup__heading {
+  margin: 0.4rem 0 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------- ping -- */
+
+/* Invisible by definition; it only exists to make a sound. */
+.ping { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .multiword__word,
+  .ellipses__dot,
+  .typed[data-typed="1"]::after { animation: none; }
+  body { scroll-behavior: auto; }
+  .editor { transition: none; }
+}
