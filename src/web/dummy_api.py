@@ -33,9 +33,10 @@ default, and ``BASE_LATENCY``/``GAME`` can be overridden in tests.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 # BackendUnavailable is imported rather than defined, so the dummy and the real
 # backend raise the same class and the switch between them is invisible above.
@@ -47,6 +48,11 @@ BASE_LATENCY = float(os.environ.get("HACKS_UI_LATENCY", "0"))
 SCENARIO_COMPLETE = "complete"
 SCENARIO_VAGUE = "vague"
 SCENARIO_UNSTABLE = "unstable"
+
+# What a game says when the user ended it with the manual override rather than
+# letting it finish.  It is a different sentence from a win, and it is the
+# honest one.
+OVERRIDE_OUTCOME = "Stopped by the user before the game finished."
 
 _VAGUE_MARKERS = (
     "vague",
@@ -220,11 +226,31 @@ def deploy_instances(rules: str, code: str) -> Deployment:
     )
 
 
-def play_sample_game(rules: str, deployment: Deployment) -> list[dict[str, Any]]:
-    """The player agent swarm playing itself, with the reasoning it used."""
+def play_sample_game(
+    rules: str,
+    deployment: Deployment,
+    report: Callable[[dict[str, Any]], None] | None = None,
+    stop: threading.Event | None = None,
+) -> list[dict[str, Any]]:
+    """The player agent swarm playing itself, with the reasoning it used.
 
-    _pause(3.0)
-    return list(SAMPLE_GAMES["tictactoe" if deployment.instances <= 2 else "nim"])
+    ``report`` is called with each record as it is played and ``stop`` is checked
+    between turns, which is the shape the real backend has, so the UI can show
+    the game going and the user can end it.  A turn that is already in progress
+    is finished: the override is not a kill, it is a request.
+    """
+
+    records = list(SAMPLE_GAMES["tictactoe" if deployment.instances <= 2 else "nim"])
+    for index, record in enumerate(records):
+        _pause(0.9)
+        if stop is not None and stop.is_set():
+            played = records[:index]
+            if played:
+                played[-1] = dict(played[-1], outcome=OVERRIDE_OUTCOME)
+            return played
+        if report is not None:
+            report(record)
+    return records
 
 
 def collect_analyses(

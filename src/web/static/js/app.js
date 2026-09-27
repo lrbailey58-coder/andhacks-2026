@@ -15,10 +15,14 @@
   var feed = document.querySelector("[data-feed-inner]");
   var body = document.body;
 
-  var nodes = []; /* feed order, mirrors the model */
-  var byId = Object.create(null);
   var busy = false;
   var typing = null;
+
+  /* How much of each long block is on the page, by entry id.  The blocks are
+     re-rendered as their content grows, and a re-render replaces the element, so
+     this is the one place that remembers where the writing got to.  Without it
+     every new turn would throw away the transcript and write it again. */
+  var written = Object.create(null);
 
   /* ------------------------------------------------------------------ util */
 
@@ -30,20 +34,22 @@
     return null;
   }
 
+  /* The document is the feed.  There is no second list of entries kept beside
+     it, because a second list is a second thing to fall out of step with the
+     first: nested entries (a question's own editor) are not feed children, and
+     the moment one of them was treated as if it were, every position after it
+     was off by one and a status that had never arrived was re-created at the
+     bottom of the page.  An entry id is unique, so asking the document is
+     enough. */
   function entryById(id) {
-    return byId[id] || document.querySelector('[data-entry-id="' + id + '"]');
+    if (!id) return null;
+    return document.querySelector('[data-entry-id="' + id + '"]');
   }
 
-  function indexOfNode(node) {
-    for (var i = 0; i < nodes.length; i += 1) if (nodes[i] === node) return i;
-    return -1;
-  }
-
-  function register(node) {
-    var id = node.getAttribute("data-entry-id");
-    if (!id) return;
-    byId[id] = node;
-    if (nodes.indexOf(node) === -1) nodes.push(node);
+  /* The child a patch goes in front of, from the index the model sent.  Past
+     the end there is nothing to go in front of, which is the end of the feed. */
+  function childAt(index) {
+    return feed.children[index] || null;
   }
 
   /* The document scrolls, so the document is what "at the bottom" is a question
@@ -122,37 +128,26 @@
     if (patch.op === "insert") {
       var added = parse(patch.html);
       if (!added) return;
-      var at = nodes[patch.index] || null;
-      feed.insertBefore(added, at);
-      nodes.splice(patch.index, 0, added);
-      register(added);
+      feed.insertBefore(added, childAt(patch.index));
       afterInsert(added);
     } else if (patch.op === "update") {
       var current = entryById(patch.id);
       var fresh = parse(patch.html);
       if (!fresh) return;
       if (current && current.parentNode) {
+        /* In place, wherever it is - a feed entry or something inside one.  The
+           element's position in the feed is its own business; nothing here has
+           to know whether it is a child of the feed or of a question. */
         current.parentNode.replaceChild(fresh, current);
-        var at = indexOfNode(current);
-        if (at !== -1) nodes[at] = fresh;
-        else nodes.push(fresh);
-        byId[patch.id] = fresh;
-        /* A re-rendered subtree is a new one as far as the browser is concerned:
-           anything inside it that types itself out or makes a sound has to be
-           armed again, or it is left half finished - or invisible - forever. */
         afterInsert(fresh, false);
-      } else {
-        feed.appendChild(fresh);
-        nodes.push(fresh);
-        byId[patch.id] = fresh;
-        afterInsert(fresh);
       }
+      /* An update for something that is not on the page is dropped rather than
+         appended: a fresh copy at the bottom of the feed is a second copy of
+         something the reader already has, and it stays there for good. */
     } else if (patch.op === "remove") {
       var doomed = entryById(patch.id);
       if (doomed && doomed.parentNode) doomed.parentNode.removeChild(doomed);
-      delete byId[patch.id];
-      var at2 = indexOfNode(doomed);
-      if (at2 !== -1) nodes.splice(at2, 1);
+      delete written[patch.id];
     } else if (patch.op === "focus") {
       var target = entryById(patch.id);
       var area = target && target.querySelector(".editor__input");
@@ -191,9 +186,14 @@
   /* ---------------------------------------------------------------- typing */
 
   /* Plays back the [chars, delayMs] schedule the model built, so long blocks
-     never hang: each step's own delay is used, and the chunk grows. */
+     never hang: each step's own delay is used, and the chunk grows.
+
+     A block that arrives with ``data-typed="0"`` has not been written yet and
+     must be.  The guard is on "already finished" and not on "has an attribute",
+     because the stylesheet hides ``[data-typed="0"]`` and a block whose typing
+     never started is a blank one. */
   function startTyping(code) {
-    if (!code || code.dataset.typed) return;
+    if (!code || code.dataset.typed === "2") return;
     var plan;
     try {
       plan = JSON.parse(code.getAttribute("data-typing") || "{}");
@@ -203,15 +203,43 @@
     var full = code.getAttribute("data-full");
     if (full === null) full = code.textContent;
     code.setAttribute("data-full", full);
-    if (!plan || !plan.schedule || !full) {
+    var key = code.getAttribute("data-block");
+    if (!plan || !plan.schedule || !plan.schedule.length || !full) {
+      /* Nothing to type it out with, so the whole of it is on the page at once -
+         and it is remembered as written, so a later block that does have a plan
+         does not start again from the top. */
+      written[key] = full || "";
       code.dataset.typed = "2";
       return;
     }
     if (typing && typing.node) finishTyping(typing.node);
     code.dataset.typed = "1";
-    code.textContent = "";
+
+    /* Resume where the writing got to, so a block that grows (the sample game,
+       turn by turn) only has to write what is new.  What is remembered is the
+       text, not a count of it, because the text can be rewritten as well as
+       grown: a block that starts again from the top is the reader watching the
+       same paragraph be written twice.  The plan is replayed from the start to
+       find the step that carries the text already on the page. */
+    var seen = written[key] || "";
+    var keep = 0;
+    while (keep < full.length && keep < seen.length && full[keep] === seen[keep]) keep += 1;
     var at = 0;
-    var written = 0;
+    var done = 0;
+    /* At least the first step is written before anything is scheduled: a block
+       that waits for its first timer with nothing on the page is a blank block
+       for the length of that timer. */
+    var want = keep > 0 ? keep : 1;
+    while (done < want && at < plan.schedule.length) {
+      done += plan.schedule[at][0];
+      at += 1;
+    }
+    written[key] = full.slice(0, done);
+    code.textContent = full.slice(0, done);
+    if (done >= full.length || at >= plan.schedule.length) {
+      finishTyping(code);
+      return;
+    }
     typing = { node: code, timer: null };
 
     function step() {
@@ -222,14 +250,15 @@
         return;
       }
       at += 1;
-      written += chunk[0];
-      code.textContent = full.slice(0, written);
+      done += chunk[0];
+      written[key] = full.slice(0, done);
+      code.textContent = full.slice(0, done);
       scrollTyped(code);
       // The next step waits as long as it asked to, not as long as the first.
       typing.timer = window.setTimeout(step, chunk[1]);
     }
 
-    typing.timer = window.setTimeout(step, plan.schedule[0][1]);
+    typing.timer = window.setTimeout(step, plan.schedule[at][1]);
   }
 
   function finishTyping(code) {
@@ -239,6 +268,7 @@
     }
     var full = code.getAttribute("data-full");
     if (full !== null) code.textContent = full;
+    written[code.getAttribute("data-block")] = full || "";
     code.dataset.typed = "2";
   }
 
@@ -402,9 +432,19 @@
 
   /* --------------------------------------------------------------- stream */
 
-  function stream(path, payload) {
-    busy = true;
-    body.setAttribute("data-busy", "1");
+  /* ``quiet`` is for a request made *during* a run - the override, and the
+     checkboxes.  They must not claim the page is idle when the run that is
+     holding it is still going. */
+  function stream(path, payload, quiet) {
+    if (!quiet) {
+      busy = true;
+      body.setAttribute("data-busy", "1");
+    }
+    function idle() {
+      if (quiet) return;
+      body.setAttribute("data-busy", "0");
+      busy = false;
+    }
     fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -412,17 +452,14 @@
     })
       .then(function (response) {
         if (!response.ok || !response.body) throw new Error("stream failed");
-        return readFrames(response.body.getReader());
+        return readFrames(response.body.getReader(), quiet);
       })
-      .catch(function () {
-        body.setAttribute("data-busy", "0");
-        busy = false;
-      });
+      .catch(idle);
   }
 
   /* Frames are one JSON patch per "data:" line; the server sends them as the
      backend produces them, so the feed fills in while the agents work. */
-  function readFrames(reader) {
+  function readFrames(reader, quiet) {
     var buffer = "";
     var decoder = new TextDecoder();
 
@@ -430,8 +467,10 @@
       return reader.read().then(function (result) {
         if (result.done) {
           flush();
-          body.setAttribute("data-busy", "0");
-          busy = false;
+          if (!quiet) {
+            body.setAttribute("data-busy", "0");
+            busy = false;
+          }
           return;
         }
         buffer += decoder.decode(result.value, { stream: true });
@@ -524,7 +563,22 @@
         which: toggle.getAttribute("data-toggle"),
         value: !!toggle.checked,
         context: toggle.getAttribute("data-context") || "run"
-      });
+      }, true);
+      return;
+    }
+
+    /* The manual override on <StatusPlaying>.  The playtest is in flight on the
+       server, so the turn in progress still has to come back; the button says so
+       straight away rather than leaving the reader to wonder whether the click
+       landed, and the status settles with a <Result> when the swarm really has
+       stopped. */
+    var override = target.closest("[data-override]");
+    if (override && override.tagName === "BUTTON") {
+      if (override.disabled) return;
+      override.disabled = true;
+      override.textContent = "Stopping the swarm…";
+      override.classList.add("is-stopping");
+      stream("/api/override", { run: parseInt(override.getAttribute("data-run"), 10) }, true);
     }
   });
 
@@ -579,7 +633,6 @@
 
   /* ------------------------------------------------------------------ boot */
 
-  Array.prototype.forEach.call(feed.children, register);
   var blocks = document.querySelectorAll(".typed");
   for (var i = 0; i < blocks.length; i += 1) {
     blocks[i].setAttribute("data-full", blocks[i].textContent);

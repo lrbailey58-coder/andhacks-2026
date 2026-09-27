@@ -80,6 +80,8 @@ def get_session(session_id: str | None) -> ui.UIState | None:
 def reset_sessions() -> None:
     with _lock:
         _sessions.clear()
+    with pipeline._playing_lock:
+        pipeline._playing.clear()
 
 
 def _session() -> ui.UIState | None:
@@ -217,6 +219,28 @@ def api_toggle() -> Response:
     else:
         return Response('{"error":"unknown toggle"}', status=400, mimetype="application/json")
     return stream(iter([patches]))
+
+
+@app.post("/api/override")
+def api_override() -> Response:
+    """<SimOverride>: end the player agent simulation before it finishes.
+
+    The answer is streamed like everything else, because the status has to end
+    with a ``<Result>`` and the game has to say it was cut short - the turn in
+    progress is still coming back from the swarm, and pretending otherwise
+    would be a lie the feed then repeats.
+    """
+
+    state = _session()
+    if state is None:
+        return Response('{"error":"no session"}', status=400, mimetype="application/json")
+    if not pipeline.begin_override(state):
+        return Response(
+            '{"error":"no simulation is running"}',
+            status=409,
+            mimetype="application/json",
+        )
+    return stream(iter([[]]))
 
 
 @app.get("/healthz")

@@ -21,6 +21,7 @@
   {%- elif e.component == 'Result' -%}{{ result(e) }}
   {%- elif e.component == 'ShowCode' -%}{{ show_code(e) }}
   {%- elif e.component == 'ShowSample' -%}{{ show_sample(e) }}
+  {%- elif e.component == 'SimOverride' -%}{{ sim_override(e) }}
   {%- elif e.component == 'Ping' -%}{{ ping(e) }}
   {%- elif e.component == 'Followup' -%}{{ followup(e) }}
   {%- endif -%}
@@ -123,8 +124,7 @@
 </svg>
 {% endmacro %}
 
-{# --------------------------------------------------------------- Ellipses #}
-{% macro ellipses(e) %}
+{# --------------------------------------------------------------- Ellipses #}{% macro ellipses(e) %}
 <span class="ellipses" data-entry-id="{{ e.id }}" data-component="Ellipses" data-ellipses="1">{% for i in range(e.props.dots) %}<span class="ellipses__dot" style="--i: {{ i }}">.</span>{% endfor %}</span>
 {% endmacro %}
 
@@ -139,13 +139,21 @@
   the schedule that the model computed (delays grow, so long text never hangs).
 #}
 {% macro typed_body(e, language='') %}
-<pre class="longblock__body" data-entry-id="{{ e.id }}-body"><code class="typed{% if language %} language-{{ language }}{% endif %}" data-typing='{{ e.props.typing | tojson }}' data-typed="0">{{ e.props.text }}</code></pre>
+<pre class="longblock__body" data-entry-id="{{ e.id }}-body"><code class="typed{% if language %} language-{{ language }}{% endif %}" data-block="{{ e.id }}" data-typing='{{ e.props.typing | tojson }}' data-typed="0">{{ e.props.text }}</code></pre>
 {% endmacro %}
 
+{#  The head says what the block is doing rather than how long it is.  A tick
+    means the text is all there, so a block that is still being written does not
+    get one - the Design agent's answer looked finished before it was.
+    "rows" is always rendered, but only for a block that is done. #}
 {% macro long_block_head(e) %}
 <header class="longblock__head">
   <span class="longblock__caption">{{ e.props.caption }}</span>
-  <span class="longblock__meta" aria-hidden="true">{{ e.props.rows }} lines &middot; ↓</span>
+  <span class="longblock__state" data-longblock-state>
+    <span class="longblock__writing" data-state="typing">writing&hellip;</span>
+    <span class="result result--success" data-state="done" role="img" aria-label="written">&check;</span>
+    <span class="longblock__rows" data-state="done" aria-hidden="true">{{ e.props.rows }} lines &middot; ↓</span>
+  </span>
 </header>
 {% endmacro %}
 
@@ -222,6 +230,23 @@
 {% macro show_code(e) %}{{ checkbox(e, 'code') }}{% endmacro %}
 
 {% macro show_sample(e) %}{{ checkbox(e, 'sample') }}{% endmacro %}
+
+{# -------------------------------------------------------------- SimOverride #}
+{#
+  The manual override for <StatusPlaying>: the user can end the player agent
+  simulation there and then, without waiting for the swarm to finish a game that
+  has already shown what it came to show.  It sits between <ShowSample> and the
+  <Ellipses>, so the row reads as one sentence and the ellipses still belong to
+  the status.
+
+  The click is not the end of the run: the turn in flight still comes back from
+  the swarm, and only then is the status settled with a <Result>.  That is why
+  the button says the swarm is stopping rather than pretending to be a cancel,
+  and why app.js disables it for as long as the request is in the air.
+#}
+{% macro sim_override(e) %}
+<button type="button" class="override" data-entry-id="{{ e.id }}" data-component="SimOverride" data-override="stop" data-context="{{ e.props.context }}" data-run="{{ e.props.run }}"{% if e.props.disabled %} disabled{% endif %}>{{ e.props.label }}</button>
+{% endmacro %}
 
 {# ---------------------------------------------------------------- Followup #}
 {#

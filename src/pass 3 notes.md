@@ -17,3 +17,11 @@ The player swarm simulation step has a few issues.
  - The displayed sample is empty is empty.
 
 Likewise, the design review and code blocks appear blank.
+
+The design review status appears with a checkmark before is complete.
+
+My recommendation is to simplify some of the logic in the UI and actually remove
+some of the unit tests concerning the layout of the website on the understanding
+that the CSS and general architecture are more or less stable, since this will
+make it easier to spot messier problems like bad logic with how status messages
+are handled.

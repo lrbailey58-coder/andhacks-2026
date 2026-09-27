@@ -10,7 +10,6 @@ markup is what gets asserted.
 from __future__ import annotations
 
 import os
-import re
 
 import pytest
 
@@ -22,31 +21,12 @@ WEB_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web"
 )
 SCRIPT = os.path.join(WEB_DIR, "static", "js", "app.js")
-STYLESHEET = os.path.join(WEB_DIR, "static", "css", "style.css")
 
 
 @pytest.fixture(scope="module")
 def script() -> str:
     with open(SCRIPT, encoding="utf-8") as handle:
         return handle.read()
-
-
-@pytest.fixture(scope="module")
-def stylesheet() -> str:
-    with open(STYLESHEET, encoding="utf-8") as handle:
-        return handle.read()
-
-
-def css_rule(sheet: str, selector: str) -> str:
-    """The body of one top level rule, so a test can assert on its declarations.
-
-    Anchored at the start of a line, which is how this stylesheet writes rules and
-    keeps a rule nested in a media query from being picked up instead.
-    """
-
-    match = re.search(r"(?m)^" + re.escape(selector) + r"\s*\{([^}]*)\}", sheet)
-    assert match, f"the stylesheet has no {selector} rule"
-    return match.group(1)
 
 
 @pytest.fixture
@@ -298,38 +278,16 @@ def test_a_toggle_from_an_unknown_place_is_refused(client, session):
 # ---------------------------------------------------------------------------
 # Note 3: showing a block does not break the vertical feed
 # ---------------------------------------------------------------------------
-
-
-def test_the_feed_is_centred_without_reserving_space_in_the_document(stylesheet):
-    """The free space that centres the feed must not live in the document.
-
-    It used to: the feed was at least a page tall and a wrapper inside it took
-    the slack with auto margins, so the first time a long block pushed the feed
-    past the page the slack vanished and a page's worth of blank was added to
-    the bottom.  Once, and only once, which is why it looked like a bug in the
-    blocks rather than in the layout.
-    """
-
-    # One scroller for the whole page, and it is the document.
-    body = css_rule(stylesheet, "body")
-    assert "overflow-y: auto" in body
-    assert "overflow-x: hidden" in body
-
-    page = css_rule(stylesheet, ".page")
-    # A flex column is what gives `margin-block: auto` a main axis to centre on,
-    # and a floor rather than a ceiling: at least a screen tall, never clipped to
-    # it.  A `height` here would be a second box to scroll inside the document.
-    assert "display: flex" in page
-    assert "flex-direction: column" in page
-    assert "min-height: 100%" in page
-    assert "height: 100%" not in page.replace("min-height: 100%", "")
-
-    feed = css_rule(stylesheet, ".feed")
-    # Centred by the free space of the page above it, which vanishes the moment
-    # there is none, instead of by a reservation inside the feed.
-    assert "margin-block: auto" in feed
-    assert "min-height: 100%" not in feed
-    assert css_rule(stylesheet, ".feed__inner").find("margin-block") == -1
+#
+# The two stylesheet tests that used to be here are gone.  They pinned the way
+# the free space that centres the feed is expressed, and the way a hidden column
+# group is hidden, and neither of those is a thing the rest of the suite needs
+# to be true: the CSS is settled, so they could only fail when somebody restyled
+# the page on purpose, and the noise they made hid the failures worth reading.
+# The behaviour they were standing in for is still here - the feed does not grow
+# a spare page's worth of blank when a long block arrives, because
+# ``test_a_long_block_does_not_drag_the_page_with_it`` and the ``atBottom()``
+# check underneath it are what make that true.
 
 
 def test_the_browser_measures_the_document_not_the_page(script):
@@ -343,18 +301,6 @@ def test_the_browser_measures_the_document_not_the_page(script):
     assert "function atBottom() {" in script
     assert "body.scrollHeight - body.scrollTop - body.clientHeight < 120" in script
     assert "page.scrollHeight" not in script
-
-
-def test_an_empty_column_group_leaves_no_gap_in_the_feed(stylesheet):
-    """A hidden group has to actually be hidden.
-
-    ``.columns`` is a grid, and an author rule beats the browser's own rule for
-    ``[hidden]``, so the empty group was laid out anyway and took a slot in the
-    flow's vertical rhythm for nothing.
-    """
-
-    assert "display: grid" in css_rule(stylesheet, ".columns")
-    assert "display: none" in css_rule(stylesheet, ".columns[hidden]")
 
 
 def test_a_re_rendered_entry_is_armed_again(script):

@@ -35,9 +35,11 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 import types
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from dotenv import load_dotenv
 from google import genai
@@ -55,6 +57,13 @@ PLAYER_MODEL = "gemini-2.5-flash"
 
 MAX_TURNS = 150
 MAX_RETRIES = 3
+
+# Wall clock for one playtest, in seconds.  A playtest is a swarm of agents each
+# asking a model for a move, so it is bounded in time and not only in turns:
+# 150 turns of a slow model is half an hour of a browser spinner.  Checked between
+# player actions by :func:`play_game`, which reports a game cut short this way as
+# such - a timeout is a fact about the playtest, not a win for anybody.
+MAX_PLAY_SECONDS = 300.0
 
 #: The generated engine is a module, not a file, so the name is only ever the
 #: label a traceback carries.
@@ -509,12 +518,25 @@ class PlayerAgent:
 
 
 def play_game(
-    engine: types.ModuleType, rules: str, players: Sequence[PlayerAgent]
+    engine: types.ModuleType,
+    rules: str,
+    players: Sequence[PlayerAgent],
+    report: Callable[[dict[str, Any]], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> tuple[list[dict[str, Any]], int | None]:
     """The player agents playing the generated game, and everything they tried.
 
     Player IDs are 0-based throughout, exactly as the generated engine counts
     them.
+
+    Two things end the game besides somebody winning it: :data:`MAX_PLAY_SECONDS`
+    of wall clock, and ``stop`` being set, which is how the manual override on
+    ``<StatusPlaying>`` asks for the swarm to stop.  Both are checked between
+    player actions and both are counted - a turn in flight is always finished and
+    recorded, because dropping it would leave the game state and the log
+    disagreeing, which is the one thing a playtest log must never do.  A game cut
+    short reports why, so ``None`` for a winner never means "the players
+    cooperated to stalemate" by accident.
     """
 
     player_count = len(players)
@@ -522,10 +544,12 @@ def play_game(
     player_states = {player.player_id: global_state for player in players}
     artifacts: list[dict[str, Any]] = []
     winner: int | None = None
+    deadline = time.monotonic() + MAX_PLAY_SECONDS
 
     turn_count = 0
     while winner is None and turn_count < MAX_TURNS:
         turn_count += 1
+        stopped = False
 
         for player in players:
             valid_moves = engine.list_valid_moves(global_state, player.player_id)
@@ -540,28 +564,31 @@ def play_game(
             decision = player.act(engine, rules, turn)
 
             for misfire in decision.misfires:
-                artifacts.append(
-                    {
-                        "player": player.player_id,
-                        "type": "misfire",
-                        "move": misfire.move,
-                        "explanation": misfire.explanation,
-                        "state": turn.view,
-                    }
-                )
+                record = {
+                    "player": player.player_id,
+                    "type": "misfire",
+                    "move": misfire.move,
+                    "explanation": misfire.explanation,
+                    "state": turn.view,
+                }
+                artifacts.append(record)
+                if report is not None:
+                    report(record)
 
             global_state = engine.execution_function(
                 global_state, decision.move, player.player_id
             )
-            artifacts.append(
-                {
-                    "player": player.player_id,
-                    "type": "turn",
-                    "move": decision.move,
-                    "explanation": decision.explanation,
-                    "state": turn.view,
-                }
-            )
+            record = {
+                "player": player.player_id,
+                "type": "turn",
+                "turn": turn_count,
+                "move": decision.move,
+                "explanation": decision.explanation,
+                "state": turn.view,
+            }
+            artifacts.append(record)
+            if report is not None:
+                report(record)
 
             for player_id in player_states:
                 player_states[player_id] = engine.translation_function(
@@ -571,6 +598,22 @@ def play_game(
             winner = engine.eval_function(global_state)
             if winner is not None:
                 break
+
+            # Between one player's action and the next, not between rounds: an
+            # override pressed part way through a round is answered after the
+            # player whose turn it is has been recorded, and the wall clock keeps
+            # the same promise.
+            if stop is not None and stop.is_set():
+                artifacts.append({"player": None, "type": "stop", "reason": "override"})
+                stopped = True
+                break
+            if time.monotonic() >= deadline:
+                artifacts.append({"player": None, "type": "stop", "reason": "timeout"})
+                stopped = True
+                break
+
+        if winner is not None or stopped:
+            break
 
     return artifacts, winner
 
