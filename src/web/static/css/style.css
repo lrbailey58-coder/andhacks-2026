@@ -214,9 +214,10 @@ body {
 .editor.is-submitted {
   align-self: flex-end;
   width: min(100%, 30rem);
-  background: #1b1e2388;
+  background: #1b1e2322;
   border-style: dashed;
   border-color: var(--line-soft);
+  color: black;
 }
 
 /* The same editor, used in three places, reads slightly differently.  The first

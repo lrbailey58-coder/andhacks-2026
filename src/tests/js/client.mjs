@@ -122,13 +122,45 @@ function newPage(bodyHtml) {
     };
   }
 
+  /* An answer that is not a stream: a status, and the body behind it, which is
+     what the server sends when a run will not start. */
+  function answer(status, text) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text: () => Promise.resolve(text),
+      json: () => Promise.resolve(JSON.parse(text)),
+      body: null,
+    };
+  }
+
   function fetchShim(path, options) {
-    requests.push({ path, body: JSON.parse(options.body) });
-    const frames = queues.shift() || [];
+    requests.push({
+      path,
+      method: options ? options.method : "GET",
+      body: options && options.body ? JSON.parse(options.body) : null,
+    });
+    /* Nothing answers at all: the request never reaches the server, which the
+       browser says with a TypeError and no other information. */
+    if (offline) return Promise.reject(new TypeError("Failed to fetch"));
+    /* The page asks this after anything goes wrong, and it is never a stream. */
+    if (path === "/api/diagnostics") {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(page.diagnostics),
+      });
+    }
+    const queued = queues.shift();
+    if (queued && !Array.isArray(queued)) {
+      return Promise.resolve(answer(queued.status, queued.body || ""));
+    }
+    const frames = queued || [];
     const gate = claimed.shift() || { open: true, waiting: [] };
     gates.push(gate);
     return Promise.resolve({
       ok: true,
+      status: 200,
       body: { getReader: () => makeReader(frames, gate) },
     });
   }
@@ -158,11 +190,40 @@ function newPage(bodyHtml) {
     for (const handler of [...(documentListeners.get(type) || [])]) handler(event);
   };
 
+  /* The window the same way: app.js hangs two hooks off it, and the harness has
+     to be able to set either of them off. */
+  const windowListeners = new Map();
+  const windowShim = {
+    setTimeout: setTimeoutShim,
+    clearTimeout: clearTimeoutShim,
+    scrollTo() {},
+    addEventListener(type, handler) {
+      if (!windowListeners.has(type)) windowListeners.set(type, []);
+      windowListeners.get(type).push(handler);
+    },
+  };
+
+  /* app.js writes what it could not fix to the console, so the harness keeps a
+     copy: a report nobody can read is the same as no report.  ``warn`` and
+     ``error`` are passed through to the real console as well, so a genuine
+     mistake in the page still shows up in the output rather than only here. */
+  const log = [];
+  const realConsole = { log: console.log, info: console.info, warn: console.warn, error: console.error };
+  const consoleShim = {};
+  for (const level of ["log", "info", "warn", "error"]) {
+    consoleShim[level] = (...args) => {
+      log.push({ level, args });
+      if (level === "warn" || level === "error") realConsole[level](...args);
+    };
+  }
+
   const globals = {
-    window: { setTimeout: setTimeoutShim, clearTimeout: clearTimeoutShim, scrollTo() {} },
+    window: windowShim,
     document,
     navigator: { clipboard: null },
     fetch: fetchShim,
+    console: consoleShim,
+    location: { href: "http://localhost:5000/" },
     Audio: class {
       constructor(src) {
         this.src = src;

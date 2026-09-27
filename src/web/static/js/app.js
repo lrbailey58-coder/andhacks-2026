@@ -464,6 +464,85 @@
     window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
   }
 
+  /* --------------------------------------------------------- diagnostics */
+
+  /* A page that has silently stopped is the hardest thing in the world to help
+     with over a shoulder: there is nothing on it to read, and nothing in the
+     feed that says what went missing.  So everything the page cannot fix by
+     itself is written to the console as one object - expandable in place, and
+     copyable whole into a chat window. */
+
+  var DIAGNOSTICS_PATH = "/api/diagnostics";
+
+  /* What was sent, as a shape rather than as content.  The prompt can be a whole
+     pasted document, and this report ends up in channels; the length is the
+     useful half, because "no text and two files" and "a page and a half" are
+     different mistakes to go looking for. */
+  function shapeOf(payload) {
+    if (!payload) return { text: 0, files: 0, extras: [] };
+    var extras = [];
+    for (var key in payload) {
+      if (key === "text" || key === "files") continue;
+      extras.push(key + "=" + payload[key]);
+    }
+    return {
+      text: String(payload.text || "").length,
+      files: (payload.files || []).length,
+      extras: extras
+    };
+  }
+
+  function report(what, detail) {
+    var note = { what: what, when: new Date().toISOString() };
+    if (typeof location !== "undefined") note.page = location.href;
+    for (var key in detail) {
+      if (detail[key] !== undefined && detail[key] !== null) note[key] = detail[key];
+    }
+    console.error("[hacks] " + what, note);
+    return note;
+  }
+
+  function print(note) {
+    if (note) console.error("[hacks] server diagnostics", note);
+  }
+
+  /* The server's own words, which say more than a status code does: "no
+     session" and "the swarm is down" are both a 4xx, and only one of them is
+     the reader's doing.  Read from a body that was never streamed, so the happy
+     path costs nothing. */
+  function reasonOf(response) {
+    if (typeof response.text !== "function") return Promise.resolve(null);
+    return response.text().then(
+      function (text) {
+        if (!text) return null;
+        try {
+          var body = JSON.parse(text);
+          if (body && body.error) return String(body.error);
+        } catch (err) {
+          /* not JSON; the raw text is the next best thing */
+        }
+        return text.slice(0, 300);
+      },
+      function () {
+        return null;
+      }
+    );
+  }
+
+  /* What the server knows: which API is switched on, whether a key was found
+     and where from, and how the recent model calls went.  Asked for when
+     something goes wrong rather than on every page load, because that is the
+     only time it is worth anything. */
+  function diagnostics() {
+    return fetch(DIAGNOSTICS_PATH)
+      .then(function (response) {
+        return response.ok ? response.json() : null;
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
   /* --------------------------------------------------------------- stream */
 
   /* ``quiet`` is for a request made *during* a run - the override, and the
@@ -479,16 +558,66 @@
       body.setAttribute("data-busy", "0");
       busy = false;
     }
+
+    /* What the failure turned out to be, worked out as it happens: the server's
+       own message when it answered, the browser's own story when the request
+       never got that far. */
+    var why = null;
+    var hint = "";
+    var said = false;
+
+    function complain(problem) {
+      /* Once.  A stream that fails after reading a few frames rejects through
+         the same path, and the reason is still the one already reported. */
+      if (said) return;
+      said = true;
+      report(path + " failed", {
+        sent: shapeOf(payload),
+        why: why || "the stream stopped part way",
+        hint: hint,
+        error: String((problem && problem.message) || problem)
+      });
+      diagnostics().then(print);
+    }
+
     fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload || {})
     })
       .then(function (response) {
-        if (!response.ok || !response.body) throw new Error("stream failed");
+        if (!response.ok) {
+          return reasonOf(response).then(function (reason) {
+            why = (response.status || "?") + " " + (reason || "no reason given");
+            hint =
+              response.status === 400
+                ? "the server did not recognise the request; reload the page for a fresh session"
+                : "";
+            throw new Error("the server answered " + response.status);
+          });
+        }
+        if (!response.body) {
+          why = "the answer carried no stream";
+          throw new Error("no stream in the answer");
+        }
         return readFrames(response.body.getReader(), quiet);
       })
-      .catch(idle);
+      .catch(function (problem) {
+        /* A fetch that rejects never reached the server, and the browser says so
+           with a TypeError and nothing else.  The cause is never in this file:
+           the server is not running, the page was opened from somewhere other
+           than the server, a proxy or an extension is in the way, or the
+           machine is not on the network it thinks it is. */
+        if (!why && problem && problem.name === "TypeError") {
+          why = "the request never reached the server";
+          hint =
+            "is the server running on the host this page came from, and did the " +
+            "browser open this page from that same host?  " +
+            DIAGNOSTICS_PATH + " will say whether the server has a Gemini key.";
+        }
+        idle();
+        complain(problem);
+      });
   }
 
   /* Frames are one JSON patch per "data:" line; the server sends them as the
@@ -528,7 +657,14 @@
         try {
           applyPatch(JSON.parse(line.slice(5).trim()));
         } catch (err) {
-          /* a malformed frame should not stop the rest of the feed */
+          /* A malformed frame should not stop the rest of the feed, but it is
+             not supposed to happen either: the server sent something this file
+             cannot read, and that is worth a line in the console rather than a
+             block that is quietly missing. */
+          console.warn("[hacks] a patch from the server could not be read", {
+            error: String((err && err.message) || err),
+            frame: line.slice(0, 200)
+          });
         }
       }
     }
@@ -666,6 +802,37 @@
   });
 
   /* ------------------------------------------------------------------ boot */
+
+  /* The last two lines of this file are the ones that get somebody out of a
+     dead page.  Anything this file throws, and any promise anywhere on the page
+     that is rejected and never caught, is reported here - an uncaught error is
+     otherwise invisible in the console unless the person reading it knows to
+     look in the right tab.  Kept off the streams above, which report themselves
+     with the request that failed. */
+
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("error", function (event) {
+      report("uncaught error", {
+        where: event.filename + ":" + event.lineno,
+        error: String((event.error && event.error.message) || event.message)
+      });
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      var reason = event.reason || {};
+      report("a promise was rejected and never caught", {
+        error: String((reason && reason.message) || reason)
+      });
+      diagnostics().then(print);
+    });
+  }
+
+  /* Typed into the console by hand, for the case where nothing failed but the
+     run still will not start:  hacksDiagnostics()  */
+  if (typeof window !== "undefined") {
+    window.hacksDiagnostics = function () {
+      return diagnostics().then(print);
+    };
+  }
 
   var blocks = document.querySelectorAll(".typed");
   for (var i = 0; i < blocks.length; i += 1) {

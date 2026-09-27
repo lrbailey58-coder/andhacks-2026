@@ -17,11 +17,13 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sys
 import threading
 from itertools import chain
 from types import ModuleType
 from typing import Any, Iterator
 
+from dotenv import dotenv_values, find_dotenv
 from flask import Flask, Response, request
 
 import api_errors
@@ -246,6 +248,72 @@ def api_override() -> Response:
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok", "scenarios": "complete, vague, unstable"}
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+
+def key_report() -> dict[str, Any]:
+    """Where the Gemini key came from, or that it was never found.
+
+    A place and never a value, because this is printed into browser consoles.
+    The ``.env`` is read directly as well as the environment: ``load_dotenv``
+    only runs when the real backend is first imported, so a teammate whose key
+    is sitting in a ``.env`` the server never found would otherwise be told they
+    have no key at all - the opposite of the truth, and a long way from obvious.
+    """
+
+    dotenv = find_dotenv()
+    if os.environ.get("GEMINI_API_KEY"):
+        return {"key_found": True, "key_source": "environment", "dotenv": dotenv}
+    if dotenv and dotenv_values(dotenv).get("GEMINI_API_KEY"):
+        return {"key_found": True, "key_source": "dotenv", "dotenv": dotenv}
+    return {
+        "key_found": False,
+        "key_source": "missing",
+        "dotenv": dotenv,
+        "hint": (
+            "GEMINI_API_KEY is in neither the environment the server was started "
+            f"in nor {dotenv or 'a .env file anywhere above the server'}"
+        ),
+    }
+
+
+@app.get("/api/diagnostics")
+def api_diagnostics() -> dict[str, Any]:
+    """What the server knows about the model calls behind this page.
+
+    The page's console asks for this whenever a request fails, and a teammate
+    can open it directly when the page shows them nothing to read.  It answers
+    the three questions behind nearly every "I cannot reach Gemini" report:
+    which API is switched on, whether a key was found and where it came from,
+    and what the recent calls actually returned - status code included, which is
+    what separates a refused key from a spent quota from a model name that does
+    not exist.
+    """
+
+    # The real backend is read out of the module table rather than imported: a
+    # page that has not run a turn yet should be able to ask this without the
+    # answer loading a model client first.
+    swarm = sys.modules.get("backend.swarm")
+    return {
+        "api": "dummy" if USE_DUMMY_API else "real",
+        "client_built": bool(getattr(swarm, "_CLIENT", None)),
+        "models": (
+            {
+                "rules": swarm.RULES_MODEL,
+                "design": swarm.DESIGN_MODEL,
+                "player": swarm.PLAYER_MODEL,
+            }
+            if swarm is not None
+            else None
+        ),
+        "calls": [call.as_dict() for call in api_errors.calls()],
+        "failures": len(api_errors.failures()),
+        **key_report(),
+    }
 
 
 def main() -> None:

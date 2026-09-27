@@ -45,6 +45,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
 
+import api_errors
 from api_errors import BackendUnavailable
 
 # ---------------------------------------------------------------------------
@@ -81,13 +82,16 @@ def get_client() -> Any:
 
     global _CLIENT
     if _CLIENT is None:
+        started = time.monotonic()
         try:
             _CLIENT = genai.Client()
         except Exception as problem:
+            api_errors.record("client", False, time.monotonic() - started, problem)
             raise BackendUnavailable(
                 f"the Gemini client could not be started ({problem}); "
                 "GEMINI_API_KEY may be missing"
             ) from problem
+        api_errors.record("client", True, time.monotonic() - started)
     return _CLIENT
 
 
@@ -131,21 +135,26 @@ def generate(
 ) -> str:
     """One completion, as text.  Anything that goes wrong is a lost service."""
 
+    started = time.monotonic()
     try:
-        return get_client().models.generate_content(
+        text = get_client().models.generate_content(
             model=model, contents=contents, config=config
         ).text
     except BackendUnavailable:
         raise
     except Exception as problem:
+        api_errors.record(model, False, time.monotonic() - started, problem)
         raise BackendUnavailable(f"{model} did not answer ({problem})") from problem
+    api_errors.record(model, True, time.monotonic() - started)
+    return text
 
 
 def open_chat(model: str, system_instruction: str, temperature: float) -> Any:
     """Start a chat session with its own system instruction."""
 
+    started = time.monotonic()
     try:
-        return get_client().chats.create(
+        chat = get_client().chats.create(
             model=model,
             config=get_config(
                 system_instruction=system_instruction, temperature=temperature
@@ -154,20 +163,29 @@ def open_chat(model: str, system_instruction: str, temperature: float) -> Any:
     except BackendUnavailable:
         raise
     except Exception as problem:
+        api_errors.record(model, False, time.monotonic() - started, problem)
         raise BackendUnavailable(
             f"{model} could not be reached ({problem})"
         ) from problem
+    api_errors.record(model, True, time.monotonic() - started)
+    return chat
 
 
 def reply(chat: Any, message: str) -> str:
     """The next thing the agent says, as text."""
 
+    started = time.monotonic()
     try:
-        return chat.send_message(message).text
+        text = chat.send_message(message).text
     except BackendUnavailable:
         raise
     except Exception as problem:
+        api_errors.record("chat", False, time.monotonic() - started, problem)
         raise BackendUnavailable(f"the agent lost service ({problem})") from problem
+    # The chat has already been logged as a model when it was opened, so this is
+    # recorded as a turn of the same conversation rather than a second model.
+    api_errors.record("chat", True, time.monotonic() - started)
+    return text
 
 
 # ---------------------------------------------------------------------------
