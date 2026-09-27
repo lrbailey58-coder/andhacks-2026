@@ -7,6 +7,12 @@ dataclasses for the answers, and a :class:`BackendUnavailable` exception for
 the loss-of-service case the UI has to survive.  Nothing here is a route, a
 JSON schema, or a database.
 
+:mod:`backend.api` has the same six functions with the same arguments, so the
+app-level switch in :mod:`web.app` can put either one in front of the UI.  The
+one argument the dummy has no use for is ``run``, the identity of the run doing
+the asking, which the real backend needs to keep the Rules agent's conversation
+open; it is accepted and ignored, so neither side can be called the wrong way.
+
 The functions are deterministic and scenario driven, so the flows in
 "ui instructions.md" can be exercised end to end:
 
@@ -30,6 +36,10 @@ import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Sequence
+
+# BackendUnavailable is imported rather than defined, so the dummy and the real
+# backend raise the same class and the switch between them is invisible above.
+from api_errors import BackendUnavailable  # noqa: F401
 
 # Set by tests to make the run instant and deterministic.
 BASE_LATENCY = float(os.environ.get("HACKS_UI_LATENCY", "0"))
@@ -76,10 +86,6 @@ _KNOWN_GAMES = (
     ("connect four", "Connect Four", "code_tictactoe"),
     ("chess", "Chess", "code_tictactoe"),
 )
-
-
-class BackendUnavailable(RuntimeError):
-    """The agent swarm lost service, or a model call came back unusable."""
 
 
 # The simulated outage fires once, so a retry from the "What's next?" editor
@@ -146,8 +152,16 @@ def _pause(seconds: float) -> None:
 # ---------------------------------------------------------------------------
 
 
-def interpret_rules(prompt: str, answers: Sequence[str] = ()) -> Interpretation:
-    """The Rules agent reads the design and either restates it or asks."""
+def interpret_rules(
+    prompt: str, answers: Sequence[str] = (), run: Any = None
+) -> Interpretation:
+    """The Rules agent reads the design and either restates it or asks.
+
+    ``run`` is the identity of the run asking.  The real backend needs it to
+    hold one conversation open across a question and its answer; the dummy has
+    the whole design in ``prompt`` already, so it only takes the argument to
+    keep the two interchangeable.
+    """
 
     _pause(1.2)
     scenario = scenario_for(prompt)

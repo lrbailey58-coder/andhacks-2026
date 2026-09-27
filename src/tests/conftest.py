@@ -179,6 +179,18 @@ def frames_of(response) -> list[dict]:
 
 
 @pytest.fixture(autouse=True)
+def dummy_api_switch(monkeypatch):
+    """The front end suite runs against the dummy, never the real swarm.
+
+    This is the switch from :data:`web.app.USE_DUMMY_API`, turned on here and
+    nowhere else: nothing about it reaches the page, and the tests that are
+    about the real backend pass it in themselves.
+    """
+
+    monkeypatch.setattr(app, "USE_DUMMY_API", True)
+
+
+@pytest.fixture(autouse=True)
 def instant_api(monkeypatch):
     """No simulated latency, and a clean dummy, so runs are quick and repeatable."""
 
