@@ -317,9 +317,9 @@ def test_both_toggles_at_the_response_give_two_columns(state):
     assert group.component == ui.COMPONENT_COLUMNS
     assert group.children == []
 
-    ui.set_show_code(state, True)
+    ui.set_show_code(state, True, ui.TOGGLE_FINAL)
     assert group.props["columns"] == 1
-    ui.set_show_sample(state, True)
+    ui.set_show_sample(state, True, ui.TOGGLE_FINAL)
     assert group.props["columns"] == 2
     assert [child.component for child in group.children] == [
         ui.COMPONENT_LONG_BLOCK_CODE,
@@ -331,19 +331,28 @@ def test_both_toggles_at_the_response_give_two_columns(state):
     assert "columns--2" in html
 
 
-def test_a_checkbox_reflects_in_every_place_it_appears(state):
+def test_a_checkbox_only_settles_the_scope_it_belongs_to(state):
+    """One box ticked, one box ticked - the other kinds of question untouched."""
+
     ui.submit(state, "a game of dice")
     ui.show_status(state, ui.STATUS_PLAYING)
     ui.set_show_sample(state, True)
-    checkboxes = [
+
+    playing = [
         node
         for entry in state.entries
         for node in entry.walk()
         if node.component == ui.COMPONENT_SHOW_SAMPLE
     ]
-    assert len(checkboxes) == 1
-    assert checkboxes[0].props["checked"] is True
-    assert 'checked' in render.entry_html(checkboxes[0])
+    assert len(playing) == 1
+    assert playing[0].props["scope"] == ui.TOGGLE_RUN
+    assert playing[0].props["checked"] is True
+    assert "checked" in render.entry_html(playing[0])
+
+    # The run's own boxes carry the run's request, and nothing moved them.
+    editor = state.entries[1]
+    assert editor.props["code_checked"] is False
+    assert state.show_code is False
 
 
 # ---------------------------------------------------------------------------

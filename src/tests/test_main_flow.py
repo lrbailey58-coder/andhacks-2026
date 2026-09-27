@@ -103,8 +103,9 @@ def test_both_toggles_at_the_response_give_adjacent_columns(submit, toggle):
     # An empty column group is hidden, so it leaves no gap in the feed.
     assert "hidden" in feed.all("Columns")[0]["html"]
 
-    toggle("code", True)
-    feed = toggle("sample", True)
+    # The two boxes at the answer, and only those two.
+    toggle("code", True, ui.TOGGLE_FINAL)
+    feed = toggle("sample", True, ui.TOGGLE_FINAL)
 
     columns = feed.all("Columns")[0]["html"]
     assert 'data-columns="2"' in columns
@@ -113,9 +114,10 @@ def test_both_toggles_at_the_response_give_adjacent_columns(submit, toggle):
     assert columns.count('data-component="LongBlockCode"') == 1
     assert columns.count('data-component="LongBlock"') == 1
 
-    # The same two blocks also appear in the middle of the feed.
-    assert feed.count("LongBlockCode") == 2
-    assert feed.count("LongBlock") == 2
+    # And nothing was put in the middle of the feed to go with them: the answer's
+    # boxes are a question about the answer.
+    assert feed.count("LongBlockCode") == 1
+    assert feed.count("LongBlock") == 1
 
 
 def test_show_code_can_be_asked_for_after_the_run(submit, toggle):
@@ -123,12 +125,15 @@ def test_show_code_can_be_asked_for_after_the_run(submit, toggle):
     assert feed.count("LongBlockCode") == 0
     assert "initial_game_state" not in feed.html
 
+    # The run's own box asks for the block in the middle of the feed.
     feed = toggle("code", True)
-    assert feed.count("LongBlockCode") == 2
+    assert feed.count("LongBlockCode") == 1
     assert "initial_game_state" in feed.html
     # It is anchored to the deploying step, which is where the code is fetched.
     assert feed.index("LongBlockCode") > feed.index("StatusDeploying")
     assert feed.index("LongBlockCode") < feed.index("StatusPlaying")
+    # The answer's row is not a second copy of it.
+    assert "LongBlockCode" not in feed.html_of("Columns")
 
 
 # ---------------------------------------------------------------------------
@@ -183,9 +188,11 @@ def test_poorly_specified_game_asks_a_question_and_waits(submit, toggle, session
     assert 'data-state="done"' in question_html
     assert state.results(ui.COMPONENT_STATUS_INTERPRETING) == ["failure", "success"]
 
-    # And the run carries on to the finish.  <ShowCode> was checked before the
-    # run and again at the response, so the code shows in both places.
-    assert feed.count("LongBlockCode") == 2
+    # And the run carries on to the finish.  <ShowCode> was asked for before the
+    # run, so the code shows once, under the step that fetched it.  The answer's
+    # own boxes start unticked: they are a separate question, so the same block
+    # is not put on the page twice.
+    assert feed.count("LongBlockCode") == 1
     assert feed.count("LongBlockResponse") == 1
     assert "What's next?" in feed.text
     assert state.answers == ["Two players. On your turn, take one counter off the table."]

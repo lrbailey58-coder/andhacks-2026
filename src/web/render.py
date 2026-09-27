@@ -44,6 +44,10 @@ def environment() -> Environment:
             keep_trailing_newline=False,
         )
         _env.globals["url_for"] = url_for
+        # The two checkbox scopes are wire values as much as they are model
+        # values, so the template reads them from one place.
+        _env.globals["scope_run"] = ui.TOGGLE_RUN
+        _env.globals["scope_final"] = ui.TOGGLE_FINAL
         _feed = _env.get_template("feed.html").module
         _index = _env.get_template("index.html")
     return _env

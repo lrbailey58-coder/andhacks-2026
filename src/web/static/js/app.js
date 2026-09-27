@@ -12,7 +12,6 @@
 
   var MODIFIERS = ["ctrlKey", "altKey", "shiftKey", "metaKey"];
 
-  var page = document.querySelector("[data-page]");
   var feed = document.querySelector("[data-feed-inner]");
   var body = document.body;
 
@@ -47,9 +46,13 @@
     if (nodes.indexOf(node) === -1) nodes.push(node);
   }
 
+  /* The document scrolls, so the document is what "at the bottom" is a question
+     about.  The page element is only a wrapper: it is as tall as its content, so
+     measuring it would say the feed is always at the bottom, and every block
+     would drag the page down with it. */
   function atBottom() {
-    if (!page) return true;
-    return page.scrollHeight - page.scrollTop - page.clientHeight < 120;
+    if (!body) return true;
+    return body.scrollHeight - body.scrollTop - body.clientHeight < 120;
   }
 
   function scrollTo(node) {
@@ -130,8 +133,14 @@
       if (!fresh) return;
       if (current && current.parentNode) {
         current.parentNode.replaceChild(fresh, current);
-        nodes[indexOfNode(current)] = fresh;
+        var at = indexOfNode(current);
+        if (at !== -1) nodes[at] = fresh;
+        else nodes.push(fresh);
         byId[patch.id] = fresh;
+        /* A re-rendered subtree is a new one as far as the browser is concerned:
+           anything inside it that types itself out or makes a sound has to be
+           armed again, or it is left half finished - or invisible - forever. */
+        afterInsert(fresh, false);
       } else {
         feed.appendChild(fresh);
         nodes.push(fresh);
@@ -160,7 +169,7 @@
     return holder.content.firstElementChild;
   }
 
-  function afterInsert(node) {
+  function afterInsert(node, mayScroll) {
     var area =
       node.matches(".editor:not(.is-submitted)")
         ? node.querySelector(".editor__input")
@@ -174,7 +183,9 @@
     if (word) startWordCycle(word);
     var pinger = node.matches("[data-ping]") ? node : node.querySelector("[data-ping]");
     if (pinger) ping(pinger);
-    if (atBottom()) scrollTo(node);
+    /* A re-render is not new content arriving, so it does not pull the page
+       down: the entry may be a long way up the feed. */
+    if (mayScroll !== false && atBottom()) scrollTo(node);
   }
 
   /* ---------------------------------------------------------------- typing */
@@ -213,7 +224,7 @@
       at += 1;
       written += chunk[0];
       code.textContent = full.slice(0, written);
-      scrollTo(code);
+      scrollTyped(code);
       // The next step waits as long as it asked to, not as long as the first.
       typing.timer = window.setTimeout(step, chunk[1]);
     }
@@ -229,6 +240,18 @@
     var full = code.getAttribute("data-full");
     if (full !== null) code.textContent = full;
     code.dataset.typed = "2";
+  }
+
+  /* A long block is a window onto itself, so it scrolls its own text as it is
+     written.  The page only follows if the reader is already at the bottom of
+     the feed: yanking it down on every keystroke is what makes a tall block
+     arrive where the reader is not looking. */
+  function scrollTyped(node) {
+    var window_ = node.parentNode;
+    if (window_ && window_.scrollHeight > window_.clientHeight + 1) {
+      window_.scrollTop = window_.scrollHeight;
+    }
+    if (atBottom()) scrollTo(node);
   }
 
   /* ------------------------------------------------------------- multiword */
@@ -491,14 +514,17 @@
 
     var toggle = target.closest("[data-toggle]");
     if (toggle && toggle.tagName === "INPUT") {
-      var which = toggle.getAttribute("data-toggle");
-      /* One setting, more than one checkbox: the click settles them all, so
-         the model never has to echo a checkbox the user is already looking at. */
-      var boxes = document.querySelectorAll(
-        'input[type="checkbox"][data-toggle="' + which + '"]'
-      );
-      for (var i = 0; i < boxes.length; i += 1) boxes[i].checked = toggle.checked;
-      stream("/api/toggle", { which: which, value: !!toggle.checked });
+      /* A checkbox that is no longer attached to the newest thing in the feed
+         is drawn greyed out and does nothing at all. */
+      if (toggle.disabled) return;
+      /* Only the box that was clicked changes.  The other boxes of the same kind
+         are separate questions - a request about the run, or about the answer -
+         and answering one of them says nothing about the others. */
+      stream("/api/toggle", {
+        which: toggle.getAttribute("data-toggle"),
+        value: !!toggle.checked,
+        context: toggle.getAttribute("data-context") || "run"
+      });
     }
   });
 

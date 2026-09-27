@@ -98,19 +98,48 @@ PROMPT_PLACEHOLDER = (
 )
 #: The editor that answers a question says so: a different default text, and the
 #: same one whichever question was asked.
-QUESTION_PLACEHOLDER = "Answer the question, then Enter to carry on"
+QUESTION_PLACEHOLDER = ""
 PROMPT_BUTTON_LABEL = "Show me the code"
 FOLLOWUP_HEADING = "What's next?"
 
 MULTIWORD_WORDS = (
     "an Experience",
-    "a Scenario",
     "a Board Game",
+    "a Scenario",
     "a Simulation",
+    "a Card Game",
     "a Duel",
     "a Campaign",
+    "a Skirmish",
+    "a Wargame",
+    "a Dice Game",
+    "a Tournament",
+    "a Strategy Game",
+    "a Tabletop Game",
+    "a Roguelike",
+    "a Heist",
+    "a Sandbox",
+    "an Arcade Game",
+    "a Grand Strategy",
 )
 MULTIWORD_PERIOD_MS = 2600
+
+#: Which <ShowCode> / <ShowSample> was clicked, and therefore what the click is
+#: allowed to do.  The brief puts these checkboxes in two different places with
+#: two different jobs, so the click has to say which one it came from:
+#:
+#: ``TOGGLE_RUN``   the request for the run that is under way - the box beside
+#:                  the first <PromptEditor>, or the <ShowSample> that arrives
+#:                  alongside <StatusPlaying>.  It shows the block beside the
+#:                  step that produced it, and the answer offers the same thing
+#:                  again in the columns beside it.
+#: ``TOGGLE_FINAL`` the two boxes at the bottom of the <LongBlockResponse>.  They
+#:                  show the run's code and sample in the adjacent columns, and
+#:                  nothing else: a click there is not a request about the steps
+#:                  that are already in the feed.
+TOGGLE_RUN = "run"
+TOGGLE_FINAL = "final"
+TOGGLE_SCOPES = (TOGGLE_RUN, TOGGLE_FINAL)
 
 CODE_DOWNLOAD_NAME = "generated_engine.py"
 SAMPLE_DOWNLOAD_NAME = "sample_game.txt"
@@ -202,8 +231,15 @@ class UIState:
     title: Entry | None = None
     awaiting: str | None = None
     finished: bool = False
+    #: The request for the run under way, read by the box beside the first
+    #: editor and the one that arrives with <StatusPlaying>.
     show_code: bool = False
     show_sample: bool = False
+    #: The answer's own two boxes, which own the adjacent columns and nothing
+    #: else.  They are seeded from the run's request when the answer appears, and
+    #: from then on the two are independent.
+    review_code: bool = False
+    review_sample: bool = False
     code: str | None = None
     sample: list[dict[str, Any]] | None = None
     prompt: str = ""
@@ -211,6 +247,7 @@ class UIState:
     question: str | None = None
     answers: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
+    response: str | None = None
     run: int = 0
     turn: int = 0
     _counter: int = 0
@@ -288,6 +325,33 @@ class UIState:
             if entry.component in STATUS_COMPONENTS.values()
             or entry.component == COMPONENT_STATUS_QUESTION
         ]
+
+    # -- the two kinds of <ShowCode> / <ShowSample> ------------------------
+    def checkboxes(self, component: str) -> list[Entry]:
+        """Every copy of one checkbox component in the feed, nested ones too."""
+
+        return [
+            node
+            for entry in self.entries
+            for node in entry.walk()
+            if node.component == component
+        ]
+
+    def toggle(self, component: str, scope: str) -> bool:
+        """The setting behind one scope of one checkbox."""
+
+        review = scope == TOGGLE_FINAL
+        if component == COMPONENT_SHOW_CODE:
+            return self.review_code if review else self.show_code
+        return self.review_sample if review else self.show_sample
+
+    def set_toggle(self, component: str, scope: str, value: bool) -> None:
+        review = scope == TOGGLE_FINAL
+        if component == COMPONENT_SHOW_CODE:
+            name = "review_code" if review else "show_code"
+        else:
+            name = "review_sample" if review else "show_sample"
+        setattr(self, name, bool(value))
 
     def components(self) -> list[str]:
         names: list[str] = []
@@ -400,8 +464,11 @@ def prompt_editor(
         "auto_grow": question,
     }
     if show_code:
-        # <ShowCode> lives to the right of the <PromptEditor>.
+        # <ShowCode> lives to the right of the <PromptEditor>.  It is a request
+        # for the run this editor is about to start, so it retires the moment the
+        # prompt is handed over.
         props["code_checked"] = state.show_code
+        props["code_disabled"] = False
     return Entry(id=state.next_id("editor"), component=COMPONENT_PROMPT_EDITOR, props=props)
 
 
@@ -467,6 +534,9 @@ def status_entry(state: UIState, kind: str, **props: Any) -> Entry:
                     "label": "Show sample game",
                     "checked": state.show_sample,
                     "context": "playing",
+                    "scope": TOGGLE_RUN,
+                    "run": state.run,
+                    "disabled": False,
                 },
             )
         )
@@ -530,6 +600,10 @@ def submit(state: UIState, text: str, files: Sequence[tuple[str, str]] = ()) -> 
     editor.props["download_name"] = (
         CODE_DOWNLOAD_NAME if editor.props["show_code"] else "prompt.txt"
     )
+    if editor.props["show_code"]:
+        # The request is the run's now, so the box that made it is history: the
+        # same update that submits the editor is what greys it out.
+        editor.props["code_disabled"] = True
     state.awaiting = None
 
     if state.title is not None and state.title.props["state"] == "centered":
@@ -718,62 +792,80 @@ def _anchor(state: UIState, kind: str) -> str | None:
     return None if status is None else status.id
 
 
-def set_show_code(state: UIState, value: bool) -> list[Patch]:
-    """The user checked or unchecked a ``<ShowCode>``."""
+def set_show_code(
+    state: UIState, value: bool, context: str = TOGGLE_RUN
+) -> list[Patch]:
+    """The user checked or unchecked a ``<ShowCode>``.
 
-    return _set_toggle(state, COMPONENT_SHOW_CODE, "code", state.show_code, value)
+    ``context`` is which of the two the click came from, because they do
+    different things.  Left out, it is the run's own request.
+    """
+
+    return _set_toggle(state, COMPONENT_SHOW_CODE, "code", value, context)
 
 
-def set_show_sample(state: UIState, value: bool) -> list[Patch]:
+def set_show_sample(
+    state: UIState, value: bool, context: str = TOGGLE_RUN
+) -> list[Patch]:
     """The user checked or unchecked a ``<ShowSample>``."""
 
-    return _set_toggle(
-        state, COMPONENT_SHOW_SAMPLE, "sample", state.show_sample, value
-    )
+    return _set_toggle(state, COMPONENT_SHOW_SAMPLE, "sample", value, context)
 
 
 def _set_toggle(
     state: UIState,
     component: str,
     what: str,
-    current: bool,
     value: bool,
+    context: str,
 ) -> list[Patch]:
     """A ``<ShowCode>`` / ``<ShowSample>`` was checked or unchecked.
 
-    The checkbox that was clicked is already showing the new state and the
-    browser keeps the other copies of that checkbox in step with it, so what
-    travels back is the feed: the row beside the answer, and the block anchored
-    to the step that produced it.
+    The checkbox that was clicked is already showing the new state, so what
+    travels back is only the feed.  Two things keep this from turning into
+    "every box of this kind ticked, and two windows opened":
+
+    * Each checkbox settles its own scope and nobody else's.  A click at the
+      answer is a statement about the answer, so it leaves the boxes beside the
+      steps alone - and vice versa.
+    * Each scope opens exactly one thing.  The run's box opens the block anchored
+      to the step that produced it; the answer's boxes open the columns beside
+      the answer.  The run's request is *offered* again at the answer, so the
+      answer's boxes arrive already ticked and the content is in both places
+      without one click having asked for both.
     """
 
+    if context not in TOGGLE_SCOPES:
+        raise UIError(f"unknown toggle context: {context!r}")
     value = bool(value)
-    if component == COMPONENT_SHOW_CODE:
-        state.show_code = value
-    else:
-        state.show_sample = value
+    state.set_toggle(component, context, value)
+    _paint(state, component, context, value)
 
-    # The model's copies of the checkbox follow anyway, so the next render of
-    # any of them - the one at <StatusPlaying>, the one at the answer - is right.
-    for checkbox in _checkboxes(state, component):
-        checkbox.props["checked"] = value
+    if context == TOGGLE_FINAL:
+        # The answer's boxes own the columns beside it, and only the columns.
+        return _set_final(state, what, value)
+
+    # A request for the run, and only for the run: the block goes under the step
+    # that made it.  <ShowCode> also lives inside the first editor's own markup,
+    # so that copy is the run's too.
     if component == COMPONENT_SHOW_CODE:
-        # <ShowCode> also lives inside the primary editor's own markup.
         for entry in state.entries:
             if entry.component == COMPONENT_PROMPT_EDITOR and entry.props.get("show_code"):
                 entry.props["code_checked"] = value
+    return _set_mid_feed(state, what, value)
 
-    patches: list[Patch] = []
-    if value:
-        # The row beside the answer settles first, then the block beside the
-        # step that made it.
-        patches.extend(_set_final(state, what, value))
-        patches.extend(_set_mid_feed(state, what, value))
-    else:
-        # Coming out, the block in the feed goes first, then the row closes.
-        patches.extend(_set_mid_feed(state, what, value))
-        patches.extend(_set_final(state, what, value))
-    return patches
+
+def _paint(state: UIState, component: str, context: str, value: bool) -> None:
+    """Settle the model side of the checkboxes in one scope, and only that one.
+
+    No patches: the browser has already drawn the box that was clicked, and the
+    other boxes in the same scope are always drawn by the same markup, so what
+    the model needs is only to be right the next time one is rendered.
+    """
+
+    for checkbox in state.checkboxes(component):
+        if checkbox.props.get("scope") == context:
+            checkbox.props["checked"] = value
 
 
 def _set_mid_feed(state: UIState, what: str, value: bool) -> list[Patch]:
@@ -819,17 +911,51 @@ def _set_final(state: UIState, what: str, value: bool) -> list[Patch]:
     return patches
 
 
-def _checkboxes(state: UIState, component: str) -> list[Entry]:
-    return [
-        node
-        for entry in state.entries
-        for node in entry.walk()
-        if node.component == component
-    ]
-
-
 def _final_group(state: UIState) -> Entry | None:
     return state.find(f"final-{state.run}")
+
+
+def _is_stale(state: UIState, checkbox: Entry) -> bool:
+    """Is this checkbox no longer attached to the most recent thing in the feed?
+
+    A checkbox is a request about the newest object it sits next to, so it stops
+    being one as soon as something newer arrives:
+
+    * the boxes at the answer belong to that answer, and the next run retires
+      them;
+    * a run's own boxes - beside the first editor, beside ``<StatusPlaying>`` -
+      are live while the run is under way, and once the answer (or a failure) is
+      on the page the answer is the most recent object in the feed and they are
+      history.
+    """
+
+    if checkbox.props.get("scope") == TOGGLE_FINAL:
+        return checkbox.props.get("run") != state.run
+    return state.finished or checkbox.props.get("run") != state.run
+
+
+def refresh_toggles(state: UIState) -> list[Patch]:
+    """Grey out the checkboxes that have stopped being about the newest thing.
+
+    One update per entry that changed, so the browser is told about a retired
+    checkbox without being told about it twice.
+    """
+
+    changed: dict[str, Entry] = {}
+    for entry in state.entries:
+        for node in entry.walk():
+            if node.component in (COMPONENT_SHOW_CODE, COMPONENT_SHOW_SAMPLE):
+                stale = _is_stale(state, node)
+                if node.props.get("disabled") != stale:
+                    node.props["disabled"] = stale
+                    changed[entry.id] = entry
+        if entry.component == COMPONENT_PROMPT_EDITOR and entry.props.get("show_code"):
+            # The editor's own box asks for the run the editor is about to start.
+            stale = bool(entry.props["submitted"])
+            if entry.props.get("code_disabled") != stale:
+                entry.props["code_disabled"] = stale
+                changed[entry.id] = entry
+    return [update_patch(entry) for entry in changed.values()]
 
 
 def show_response(state: UIState, text: str) -> list[Patch]:
@@ -853,7 +979,14 @@ def show_response(state: UIState, text: str) -> list[Patch]:
         Entry(
             id=state.next_id("showcode"),
             component=COMPONENT_SHOW_CODE,
-            props={"label": PROMPT_BUTTON_LABEL, "checked": state.show_code, "context": "final"},
+            props={
+                "label": PROMPT_BUTTON_LABEL,
+                "checked": state.toggle(COMPONENT_SHOW_CODE, TOGGLE_FINAL),
+                "context": "final",
+                "scope": TOGGLE_FINAL,
+                "run": state.run,
+                "disabled": False,
+            },
         )
     )
     entry.add(
@@ -862,8 +995,11 @@ def show_response(state: UIState, text: str) -> list[Patch]:
             component=COMPONENT_SHOW_SAMPLE,
             props={
                 "label": "Show sample game",
-                "checked": state.show_sample,
+                "checked": state.toggle(COMPONENT_SHOW_SAMPLE, TOGGLE_FINAL),
                 "context": "final",
+                "scope": TOGGLE_FINAL,
+                "run": state.run,
+                "disabled": False,
             },
         )
     )
@@ -878,11 +1014,14 @@ def show_response(state: UIState, text: str) -> list[Patch]:
     state.finished = True
     patches.append(insert_patch(len(state.entries) - 2, entry))
     patches.append(insert_patch(len(state.entries) - 1, group))
-    # A checkbox the user already ticked stays ticked at the bottom.
-    if state.show_code:
-        patches.extend(_set_final(state, "code", True))
-    if state.show_sample:
-        patches.extend(_set_final(state, "sample", True))
+    # The answer's two boxes are its own question, and they arrive unticked: the
+    # run was asked for the code at the editor, and the code has already been
+    # shown there, under the step that wrote it.  Inheriting the run's request
+    # here would put the same block on the page a second time, in the columns
+    # beside the answer, without anyone having asked for it there.
+    #
+    # The run's own boxes are history now that the answer is on the page.
+    patches.extend(refresh_toggles(state))
     patches.extend(show_followup(state))
     return patches
 
@@ -943,11 +1082,16 @@ def show_failure(state: UIState, message: str) -> list[Patch]:
     state.failures.append(message)
     state.finished = True
     patches.append(ping(state, "task_failed"))
+    # The run is over without an answer, so nothing in it is still asking for
+    # anything.
+    patches.extend(refresh_toggles(state))
     patches.extend(show_followup(state))
     return patches
 
 
-def start_run(state: UIState, text: str, files: Sequence[tuple[str, str]] = ()) -> Patch:
+def start_run(
+    state: UIState, text: str, files: Sequence[tuple[str, str]] = ()
+) -> list[Patch]:
     """A new run from the "What's next?" editor: append to the definition."""
 
     state.run += 1
@@ -958,7 +1102,12 @@ def start_run(state: UIState, text: str, files: Sequence[tuple[str, str]] = ()) 
     state.code = None
     state.sample = None
     state.response = None
-    return submit(state, text, files)
+    state.set_toggle(COMPONENT_SHOW_CODE, TOGGLE_FINAL, False)
+    state.set_toggle(COMPONENT_SHOW_SAMPLE, TOGGLE_FINAL, False)
+    # Everything the last run asked for is history from here.
+    patches = refresh_toggles(state)
+    patches.append(submit(state, text, files))
+    return patches
 
 
 def answer_question(state: UIState, text: str) -> Patch:

@@ -140,10 +140,14 @@ def api_turn() -> Response:
         return Response('{"error":"empty prompt"}', status=400, mimetype="application/json")
     # <ShowCode> / <ShowSample> may have been ticked while the prompt was being
     # written.  Only what the editor actually carries is applied, so a run
-    # without a checkbox keeps the choices made earlier.
-    for which, key in (("code", "show_code"), ("sample", "show_sample")):
+    # without a checkbox keeps the choices made earlier.  A box beside the editor
+    # is a request for the run, which is the default scope.
+    for setter, key in (
+        (ui.set_show_code, "show_code"),
+        (ui.set_show_sample, "show_sample"),
+    ):
         if key in payload:
-            setattr(state, f"show_{which}", bool(payload[key]))
+            setter(state, bool(payload[key]))
     with _lock:
         state.turn += 1
     try:
@@ -162,7 +166,14 @@ def api_turn() -> Response:
 
 @app.post("/api/toggle")
 def api_toggle() -> Response:
-    """<ShowCode> / <ShowSample> were checked or unchecked."""
+    """<ShowCode> / <ShowSample> were checked or unchecked.
+
+    ``context`` says which of the two the click came from, because they do
+    different things: the boxes beside the first editor and beside
+    <StatusPlaying> are a request for the run under way, and the two at the
+    bottom of the <LongBlockResponse> open the columns beside the answer.  A
+    request with no context is a request for the run.
+    """
 
     state = _session()
     if state is None:
@@ -170,10 +181,13 @@ def api_toggle() -> Response:
     payload = request.get_json(silent=True) or {}
     which = payload.get("which")
     value = bool(payload.get("value"))
+    context = payload.get("context") or ui.TOGGLE_RUN
+    if context not in ui.TOGGLE_SCOPES:
+        return Response('{"error":"unknown toggle context"}', status=400, mimetype="application/json")
     if which == "code":
-        patches = ui.set_show_code(state, value)
+        patches = ui.set_show_code(state, value, context)
     elif which == "sample":
-        patches = ui.set_show_sample(state, value)
+        patches = ui.set_show_sample(state, value, context)
     else:
         return Response('{"error":"unknown toggle"}', status=400, mimetype="application/json")
     return stream(iter([patches]))

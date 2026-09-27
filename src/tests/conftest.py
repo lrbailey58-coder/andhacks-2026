@@ -256,10 +256,18 @@ def submit(client, session):
 
 @pytest.fixture
 def toggle(client, session):
-    """Check or uncheck <ShowCode> / <ShowSample>."""
+    """Check or uncheck <ShowCode> / <ShowSample>.
 
-    def check(which: str, value: bool) -> StreamedFeed:
-        response = client.post("/api/toggle", json={"which": which, "value": value})
+    ``context`` names which of the two scopes the box belongs to: ``run`` for a
+    box beside a step, which asks for the block in the middle of the feed, and
+    ``final`` for the two at the answer, which open the columns beside it.  The
+    two are independent, so a test that means the answer's boxes says so.
+    """
+
+    def check(which: str, value: bool, context: str = "run") -> StreamedFeed:
+        response = client.post(
+            "/api/toggle", json={"which": which, "value": value, "context": context}
+        )
         assert response.status_code == 200
         return session.feed.apply_all(frames_of(response))
 

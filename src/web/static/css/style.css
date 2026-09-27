@@ -47,35 +47,45 @@ body {
   font-family: var(--font);
   font-size: 1rem;
   line-height: 1.6;
+  background-repeat: repeat;
   -webkit-font-smoothing: antialiased;
-}
-
-/* ------------------------------------------------------------------ feed --
-   "The feed takes up most of the screen horizontally, but not all", begins
-   centered vertically and horizontally, and scrolls once it outgrows the page.
-   The inner wrapper centres with margin auto so nothing is ever clipped. */
-
-.page {
-  height: 100%;
+  /* The document scrolls, and it is the only thing that does.  One scrollbar for
+     the whole page, so nothing appearing in the feed can give the page a box of
+     its own to scroll inside - which is what a fixed height wrapper does, and
+     which is where the layout trouble came from. */
   overflow-y: auto;
   overflow-x: hidden;
   scroll-behavior: smooth;
 }
 
-.feed {
+/* ------------------------------------------------------------------ feed --
+   "The feed takes up most of the screen horizontally, but not all", begins
+   centered vertically and horizontally, and scrolls once it outgrows the page.
+   The centring is auto margins on the feed, inside a page that is at least a
+   screen tall: while the feed is shorter than the page the free space is shared
+   above and below it, and the moment it is longer there is no free space to
+   share and the feed simply runs off the bottom.  Nothing reserves that free
+   space inside the feed, so no amount of content appearing or disappearing can
+   leave a page's worth of blank at the end of it. */
+
+.page {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+}
+
+.feed {
+  flex: none;
+  margin-block: auto;
   width: min(100% - 3rem, var(--feed-width));
   margin-inline: auto;
-  padding-block: 3rem 5rem;
+  padding-block: 3rem 4rem;
 }
 
 .feed__inner {
   display: flex;
   flex-direction: column;
   gap: var(--gap);
-  margin-block: auto;
   width: 100%;
 }
 
@@ -277,6 +287,21 @@ body {
 .checkbox--playing { margin-left: auto; font-size: 0.8rem; color: var(--ink-mute); }
 .checkbox--final { font-size: 0.9rem; }
 
+/* Retired: still readable, still in the flow, but plainly not a question any
+   more.  Only the box goes quiet - the label stays legible. */
+.checkbox--off { color: #9aa1ab; cursor: default; }
+.checkbox--off:hover .checkbox__label { color: inherit; }
+.checkbox input:disabled + .checkbox__box {
+  background: var(--paper);
+  border-color: var(--line-soft);
+  box-shadow: none;
+}
+.checkbox input:disabled:checked + .checkbox__box {
+  background: var(--line-soft);
+  border-color: var(--line-soft);
+}
+.checkbox input:disabled:checked + .checkbox__box::after { border-color: #b9bec7; }
+
 /* ---------------------------------------------------------------- buttons -- */
 
 .buttons { display: inline-flex; gap: 0.35rem; }
@@ -456,6 +481,11 @@ body {
 .columns--1 { grid-template-columns: minmax(0, 1fr); }
 .columns--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
+/* An empty group has nothing to say, so it is not laid out at all and leaves no
+   gap in the feed.  ``display: grid`` above would otherwise beat the browser's
+   own rule for ``[hidden]``. */
+.columns[hidden] { display: none; }
+
 @media (max-width: 62rem) {
   .columns--2 { grid-template-columns: minmax(0, 1fr); }
 }
@@ -480,6 +510,6 @@ body {
   .multiword__word,
   .ellipses__dot,
   .typed[data-typed="1"]::after { animation: none; }
-  .page { scroll-behavior: auto; }
+  body { scroll-behavior: auto; }
   .editor { transition: none; }
 }

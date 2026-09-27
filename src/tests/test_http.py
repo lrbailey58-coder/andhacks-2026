@@ -105,13 +105,14 @@ def test_a_full_run_streams_the_documented_sequence(page):
 
 
 def test_every_status_ends_in_a_checkmark(page):
-    marks = [
-        f["html"]
-        for f in run(page, COMPLETE_PROMPT)
-        if f["op"] == "update" and 'data-result="success"' in f["html"]
-    ]
+    # A status can be re-rendered after it is resolved - that is how a checkbox
+    # beside it is greyed out - so this is counted per status, not per frame.
+    marks: dict[str, str] = {}
+    for f in run(page, COMPLETE_PROMPT):
+        if f["op"] == "update" and 'data-result="success"' in f["html"]:
+            marks[f["id"]] = f["html"]
     assert len(marks) == len(ui.STATUS_LABELS)
-    assert all(mark.count("✓") == 1 for mark in marks)
+    assert all(mark.count("✓") == 1 for mark in marks.values())
 
 
 def test_the_title_settles_on_the_name_the_rules_agent_chose(page):
@@ -139,10 +140,13 @@ def test_asking_for_the_code_up_front_puts_it_under_deploying(page):
     # It arrived once deploying was under way, before the swarm started playing.
     assert deploying["index"] < code["index"] < playing["index"]
     assert "def initial_game_state" in code["html"]
-    # And the answer's row grew a column of its own to hold it.  One block in
-    # the row, so the row is one column wide.
+    # And it arrived once: the run was asked for the code at the editor, and the
+    # code was shown there.  The answer's row is not a second copy of the same
+    # block - it is empty, waiting for its own boxes to be ticked.
+    assert [f["id"] for f in frames if f.get("component") == ui.COMPONENT_LONG_BLOCK_CODE] == [code["id"]]
     assert 'data-columns="1"' in by_id["final-1"]["html"]
-    assert 'data-component="LongBlockCode"' in by_id["final-1"]["html"]
+    assert "hidden" in by_id["final-1"]["html"]
+    assert "LongBlockCode" not in by_id["final-1"]["html"]
 
 
 def test_the_editor_collapses_and_the_title_moves_left(page):
@@ -188,7 +192,9 @@ def test_asking_to_see_the_code_later_puts_it_under_deploying(page):
         page.post("/api/toggle", json={"which": "code", "value": True})
     )
 
-    assert [f["op"] for f in frames] == ["update", "insert"]
+    # The one thing that arrives is the block.  The answer's row is not touched,
+    # because this box is a request about the run, not about the answer.
+    assert [f["op"] for f in frames] == ["insert"]
     assert frames[-1].get("component") == ui.COMPONENT_LONG_BLOCK_CODE
     # It was anchored after the deploying status, not at the end of the feed.
     # That status went in with the run, so it is read out of the run's frames;
@@ -207,8 +213,9 @@ def test_unchecking_removes_the_code_again(page):
     )
 
     removals = [f["id"] for f in frames if f["op"] == "remove"]
-    # The mid feed block, and the column beside the answer.
-    assert removals == ["code-1", "final-code-1"]
+    # Just the one block, the one under the step that wrote it.  The answer's row
+    # never had a copy to take away, because nobody asked for one there.
+    assert removals == ["code-1"]
 
 
 def test_the_sample_toggle_works_the_same_way(page):

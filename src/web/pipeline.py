@@ -46,7 +46,7 @@ def turn(
         # because that is what ``submit`` already put together.
         previous = state.prompt
         added = ui.combine_prompt(text, files)
-        yield [ui.start_run(state, text, files)]
+        yield ui.start_run(state, text, files)
         state.prompt = f"{previous}\n\n{added}".strip() if previous else added
 
     # -- interpreting, looping on <StatusQuestion> until the rules hold up ----

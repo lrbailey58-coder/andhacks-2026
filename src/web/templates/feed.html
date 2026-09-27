@@ -58,8 +58,7 @@
     {% if e.props.show_code %}{{ show_code_entry(e) }}{% endif %}
   </div>
   <div class="editor__foot">
-    {% if e.props.submitted %}{{ copy_download(e) }}{% else %}
-    <p class="editor__hint">Enter sends it{% if e.props.role != 'primary' %} &middot; the question above is answered{% endif %} &middot; a modifier + Enter adds a line</p>
+    {% if e.props.submitted %}{{ copy_download(e) }}
     {% endif %}
   </div>
   {% if e.props.submitted %}{{ editor_transcript(e) }}{% endif %}
@@ -70,9 +69,12 @@
 <p class="editor__sent" aria-label="submitted prompt">{{ e.props.value }}</p>
 {% endmacro %}
 
+{#  The box to the right of the first editor.  It asks for the run the editor is
+    about to start, so it carries the run's scope and is greyed out the moment
+    the prompt is submitted. #}
 {% macro show_code_entry(e) %}
-<label class="checkbox checkbox--editor">
-  <input type="checkbox" data-toggle="code"{% if e.props.code_checked %} checked{% endif %}>
+<label class="checkbox checkbox--editor{% if e.props.code_disabled %} checkbox--off{% endif %}">
+  <input type="checkbox" data-toggle="code" data-context="{{ scope_run }}"{% if e.props.code_checked %} checked{% endif %}{% if e.props.code_disabled %} disabled{% endif %}>
   <span class="checkbox__box" aria-hidden="true"></span>
   <span class="checkbox__label">Show me the code</span>
 </label>
@@ -202,21 +204,24 @@
 {% endmacro %}
 
 {# --------------------------------------------------------------- Checkboxes #}
-{% macro show_code(e) %}
-<label class="checkbox checkbox--{{ e.props.context }}" data-entry-id="{{ e.id }}" data-component="{{ e.component }}">
-  <input type="checkbox" data-toggle="code"{% if e.props.checked %} checked{% endif %}>
+{#
+  One checkbox, three places, two jobs.  ``context`` is the styling variant and
+  ``scope`` is what a click is allowed to do: a box beside a step is a request
+  for the run, the two at the answer open the columns beside it.  ``disabled``
+  means the box is no longer attached to the most recent thing in the feed, so
+  it is drawn greyed and does nothing.
+#}
+{% macro checkbox(e, which) %}
+<label class="checkbox checkbox--{{ e.props.context }}{% if e.props.disabled %} checkbox--off{% endif %}" data-entry-id="{{ e.id }}" data-component="{{ e.component }}">
+  <input type="checkbox" data-toggle="{{ which }}" data-context="{{ e.props.scope }}"{% if e.props.checked %} checked{% endif %}{% if e.props.disabled %} disabled{% endif %}>
   <span class="checkbox__box" aria-hidden="true"></span>
   <span class="checkbox__label">{{ e.props.label }}</span>
 </label>
 {% endmacro %}
 
-{% macro show_sample(e) %}
-<label class="checkbox checkbox--{{ e.props.context }}" data-entry-id="{{ e.id }}" data-component="{{ e.component }}">
-  <input type="checkbox" data-toggle="sample"{% if e.props.checked %} checked{% endif %}>
-  <span class="checkbox__box" aria-hidden="true"></span>
-  <span class="checkbox__label">{{ e.props.label }}</span>
-</label>
-{% endmacro %}
+{% macro show_code(e) %}{{ checkbox(e, 'code') }}{% endmacro %}
+
+{% macro show_sample(e) %}{{ checkbox(e, 'sample') }}{% endmacro %}
 
 {# ---------------------------------------------------------------- Followup #}
 {#
