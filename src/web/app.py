@@ -2,9 +2,14 @@
 
 There is no REST API and no database: the routes here exist to serve the page
 and to stream the UI patches that :mod:`pipeline` produces, and the work itself
-is done by calling the functions in :mod:`dummy_api` (later, the real swarm)
+is done by calling the functions in whichever API the switch below selects
 directly.  Sessions are an in-memory dict, which is enough for the minimum
 viable product.
+
+The switch is :data:`USE_DUMMY_API`.  It is off for a normal run, so the
+agents in ``backend/`` answer, and the test suite turns it on so the front end
+can be exercised without a Gemini key or the cost of a playtest.  Nothing on
+the page knows it exists.
 """
 
 from __future__ import annotations
@@ -14,22 +19,43 @@ import os
 import secrets
 import threading
 from itertools import chain
+from types import ModuleType
 from typing import Any, Iterator
 
 from flask import Flask, Response, request
 
-import web.dummy_api as dummy_api
+import api_errors
 import web.pipeline as pipeline
 import web.render as render
 import web.ui as ui
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+#: The dummy API stands in for the real swarm while the front end is being built
+#: and tested.  Off is a normal run: the real swarm answers.
+USE_DUMMY_API = False
+
 app = Flask(__name__, template_folder=os.path.join(HERE, "templates"))
 app.config["JSON_SORT_KEYS"] = False
 
 _lock = threading.Lock()
 _sessions: dict[str, ui.UIState] = {}
+
+
+def active_api() -> ModuleType:
+    """The API this app is talking to, as the switch has it.
+
+    The real backend is imported here rather than at the top of the module, so a
+    run against the dummy never loads the Gemini client at all.
+    """
+
+    if USE_DUMMY_API:
+        import web.dummy_api as dummy_api
+
+        return dummy_api
+    import backend.api as backend_api
+
+    return backend_api
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +177,9 @@ def api_turn() -> Response:
     with _lock:
         state.turn += 1
     try:
-        batches = pipeline.turn(state, text, files)
+        batches = pipeline.turn(state, text, files, active_api())
         first = next(batches)
-    except (ui.UIError, dummy_api.BackendUnavailable) as problem:
+    except (ui.UIError, api_errors.BackendUnavailable) as problem:
         # Nothing was waiting for a prompt, or the swarm is down before the
         # first step.  Say so rather than streaming a traceback.
         return Response(
