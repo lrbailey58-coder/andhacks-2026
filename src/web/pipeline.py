@@ -106,16 +106,19 @@ def _playtest(
     records: list[dict[str, Any]] = []
     arrived: queue.Queue[Any] = queue.Queue()
     stop = threading.Event()
+    played: list[dict[str, Any]] = []
 
     def report(record: dict[str, Any]) -> None:
         arrived.put(record)
 
     def play() -> None:
         try:
-            api.play_sample_game(rules, deployment, report=report, stop=stop)
+            played.extend(api.play_sample_game(rules, deployment, report=report, stop=stop))
         except BaseException as error:  # noqa: BLE001 - handed to the caller
             arrived.put(error)
         finally:
+            # The queue is what makes the records and the return value visible to
+            # this thread: both are written before this, and read after it.
             arrived.put(None)
 
     end_override(state)
@@ -131,14 +134,16 @@ def _playtest(
             if isinstance(record, BaseException):
                 raise record
             records.append(record)
-            ui.store_sample(state, records)
+            # Live: the game is still being played, so the block cannot say how it
+            # ended yet.
+            ui.store_sample(state, records, live=True)
             yield ui.update_sample(state)
-        if state.sample is None:
-            # The swarm played nothing at all - a ticked <ShowSample> then has to
-            # show an empty game rather than nothing at all, or the box looks
-            # like it is lying.
-            ui.store_sample(state, records)
-            yield ui.update_sample(state)
+        # The playtest is over, however it ended, so the whole of it - including a
+        # stop the reader asked for or a clock that ran out - is written down.
+        # An empty one is stored too: a ticked <ShowSample> then has to show an
+        # empty game rather than nothing at all, or the box looks like it is lying.
+        ui.store_sample(state, played or records, live=False)
+        yield ui.update_sample(state)
     finally:
         end_override(state)
         worker.join(timeout=0.1)

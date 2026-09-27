@@ -635,6 +635,37 @@ def test_a_move_with_nothing_in_it_still_reads_as_a_move():
     )[0] == "Turn 1 · Player 1 — plays (empty move)"
 
 
+def test_a_game_in_progress_does_not_say_how_it_ended():
+    """The block grows a turn at a time, and it cannot know how the game ends
+    until it does: writing "Game over." after the first turn and taking it back
+    on the next is a claim the page cannot keep.
+    """
+
+    played = [{"turn": 1, "player": 1, "move": 4, "explanation": "Centre first."}]
+    assert "Game over" not in "\n".join(ui.sample_transcript(played, live=True))
+    assert "Game over" in "\n".join(ui.sample_transcript(played))
+
+    # Once the game is over, what it was says what it is, including a stop the
+    # reader asked for.
+    for outcome in ("Player 1 wins on turn 5.", dummy_api.OVERRIDE_OUTCOME):
+        ended = ui.sample_transcript(played + [dict(played[0], outcome=outcome)])
+        assert ended[-1] == outcome
+
+
+def test_the_block_grows_by_appending_to_what_is_already_there():
+    """Each turn adds to the text rather than rewriting it.
+
+    This is what lets the browser carry on typing where it left off instead of
+    starting the paragraph again, so the two have to agree about it.
+    """
+
+    first = [{"turn": 1, "player": 1, "move": 4, "explanation": "Centre first."}]
+    second = first + [{"turn": 2, "player": 2, "move": 1, "explanation": "A corner."}]
+    assert "\n".join(ui.sample_transcript(second, live=True)).startswith(
+        "\n".join(ui.sample_transcript(first, live=True))
+    )
+
+
 # ---------------------------------------------------------------------------
 # Note 6: the design review and the code block are not blank
 # ---------------------------------------------------------------------------
@@ -661,11 +692,33 @@ def test_a_block_that_grows_keeps_what_it_has_already_written():
 
     source = script()
     assert 'code.getAttribute("data-block")' in source
-    assert "written[key] = done;" in source
+    assert "written[key] = full.slice(0, done);" in source
     assert "code.textContent = full.slice(0, done);" in source
-    # And the plan is replayed from the start to find the step the text already
+    # What is remembered is the text, not a count of it, so text that is rewritten
+    # as well as grown still carries on from where it agrees with the page.
+    assert "var seen = written[key]" in source
+    assert "full[keep] === seen[keep]" in source
+    # The plan is replayed from the start to find the step the text already
     # passed, so a longer plan lines up with a shorter one already on the page.
-    assert "while (done < full.length && at < plan.schedule.length)" in source
+    assert "while (done < want && at < plan.schedule.length)" in source
+
+
+def test_a_block_that_is_interrupted_carries_on_rather_than_restarting():
+    """Only one block is written at a time, so a long block is interrupted when
+    another one starts - and the one that was interrupted is not finished, it is
+    waiting.  It has to be carried on when the pen is free, from the text that is
+    actually on the page: remembering it as complete skips the part the reader
+    never saw typed.
+    """
+
+    source = script()
+    assert "finishTyping(typing.node, false)" in source
+    assert "written[key] = code.textContent || \"\";" in source
+    assert 'code.dataset.typed = "1";' in source
+    assert "resumeInterrupted();" in source
+    # The block that was interrupted is looked up again rather than kept, because
+    # the element is replaced by the next update.
+    assert "feed.querySelector('[data-block=\"'" in source
 
 
 def test_the_review_is_not_marked_written_until_it_is():

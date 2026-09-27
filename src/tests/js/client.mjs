@@ -521,9 +521,17 @@ const scenarios = input.scenarios;
   ok(nextAt !== -1, "the next turn updates the same block rather than adding another");
   for (let i = firstAt + 1; i <= nextAt; i += 1) await page.step(0, false);
   const second = typedText(document, id);
-  if (process.env.DEBUG_CHECKS) {
-    console.error(`part=${JSON.stringify(part)}\nsecond=${JSON.stringify(second)}`);
-  }
+  /* No more than one step of the plan may appear at a time: a jump is the page
+     showing text the reader never watched being written, because something
+     remembered the block as further along than it was. */
+  const step = Math.max(
+    0,
+    ...JSON.parse(
+      document.querySelector(`[data-entry-id="${id}"] .typed`).getAttribute("data-typing")
+    ).schedule.map(([chars]) => chars)
+  );
+  ok(second.length - part.length <= step,
+    "the page did not skip text to catch up with itself");
   ok(second.startsWith(part),
     "the game carried on from where it was, instead of starting again from the top");
   equal(longBlocks(document).length, 1, "still one block, updated rather than duplicated");

@@ -24,6 +24,13 @@
      every new turn would throw away the transcript and write it again. */
   var written = Object.create(null);
 
+  /* Only one block is written at a time - a page that types three paragraphs at
+     once is unreadable - so a block that is interrupted goes on this list and is
+     carried on when the pen is free.  The key rather than the element, because
+     the element is replaced by the next update and the text to carry on from is
+     in ``written`` anyway. */
+  var interrupted = [];
+
   /* ------------------------------------------------------------------ util */
 
   function closestEntry(node) {
@@ -212,7 +219,11 @@
       code.dataset.typed = "2";
       return;
     }
-    if (typing && typing.node) finishTyping(typing.node);
+    if (typing && typing.node) {
+      var interruptedKey = typing.node.getAttribute("data-block");
+      finishTyping(typing.node, false);
+      if (interrupted.indexOf(interruptedKey) === -1) interrupted.push(interruptedKey);
+    }
     code.dataset.typed = "1";
 
     /* Resume where the writing got to, so a block that grows (the sample game,
@@ -237,7 +248,7 @@
     written[key] = full.slice(0, done);
     code.textContent = full.slice(0, done);
     if (done >= full.length || at >= plan.schedule.length) {
-      finishTyping(code);
+      finishTyping(code, true);
       return;
     }
     typing = { node: code, timer: null };
@@ -246,7 +257,7 @@
       if (!typing || typing.node !== code) return;
       var chunk = plan.schedule[at];
       if (!chunk) {
-        finishTyping(code);
+        finishTyping(code, true);
         return;
       }
       at += 1;
@@ -261,15 +272,38 @@
     typing.timer = window.setTimeout(step, plan.schedule[at][1]);
   }
 
-  function finishTyping(code) {
+  function finishTyping(code, complete) {
     if (typing && typing.node === code && typing.timer) {
       window.clearTimeout(typing.timer);
       typing = null;
     }
     var full = code.getAttribute("data-full");
-    if (full !== null) code.textContent = full;
-    written[code.getAttribute("data-block")] = full || "";
-    code.dataset.typed = "2";
+    var key = code.getAttribute("data-block");
+    if (complete || full === null) {
+      if (full !== null) code.textContent = full;
+      written[key] = full || "";
+      code.dataset.typed = "2";
+      resumeInterrupted();
+      return;
+    }
+    /* Another block has the pen now, and this one was not finished.  What has
+       been written is what is on the page - not the whole of the text it was
+       given, which would let the next update skip the part the reader never saw
+       typed.  It stays unfinished, and it is carried on when the pen is free. */
+    written[key] = code.textContent || "";
+    code.dataset.typed = "1";
+  }
+
+  /* Picks up where the last block left off, on the element that is on the page
+     now: the one that was interrupted has usually been replaced since. */
+  function resumeInterrupted() {
+    while (interrupted.length) {
+      var node = feed.querySelector('[data-block="' + interrupted.shift() + '"]');
+      if (node && node.dataset.typed !== "2") {
+        startTyping(node);
+        return;
+      }
+    }
   }
 
   /* A long block is a window onto itself, so it scrolls its own text as it is

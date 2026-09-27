@@ -15,7 +15,7 @@ from google.genai import types
 load_dotenv()
 
 try:
-    client = genai.Client()
+    client = genai.Client(api_key="GEMINI_API_KEY")
     # Cache the service properties on the instance so unittest.mock can patch them reliably
     #client.chats = client.chats
     #client.models = client.models

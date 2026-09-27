@@ -252,6 +252,9 @@ class UIState:
     review_sample: bool = False
     code: str | None = None
     sample: list[dict[str, Any]] | None = None
+    #: Whether the playtest that fills ``sample`` is still going.  While it is, how
+    #: the game ends is not known, so the block does not say.
+    sample_live: bool = False
     prompt: str = ""
     files: list[str] = field(default_factory=list)
     question: str | None = None
@@ -740,7 +743,7 @@ def _sample_block(state: UIState, entry_id: str) -> Entry:
         raise UIError("the sample game is not available yet")
     playing = state.status(STATUS_PLAYING)
     live = bool(playing is not None and playing.props.get("running"))
-    lines = sample_transcript(state.sample, live=live)
+    lines = sample_transcript(state.sample, live=state.sample_live)
     text = "\n".join(lines)
     return Entry(
         id=entry_id,
@@ -794,9 +797,9 @@ def sample_transcript(sample: Sequence[dict[str, Any]], live: bool = False) -> l
         head = f"Turn {record['turn']} · Player {record['player']}"
         move = _readable_move(record.get("move"))
         if record.get("illegal"):
-            lines.append(f"{head} - rejected: {move}")
+            lines.append(f"{head} — rejected: {move}")
         else:
-            lines.append(f"{head} - plays {move}")
+            lines.append(f"{head} — plays {move}")
         explanation = (record.get("explanation") or "").strip()
         if explanation:
             lines.append(f"    {explanation}")
@@ -813,8 +816,11 @@ def store_code(state: UIState, code: str) -> None:
     state.code = code
 
 
-def store_sample(state: UIState, sample: Sequence[dict[str, Any]]) -> None:
+def store_sample(state: UIState, sample: Sequence[dict[str, Any]], live: bool = False) -> None:
+    """The playtest so far.  ``live`` says it is still being played."""
+
     state.sample = [dict(record) for record in sample]
+    state.sample_live = live
 
 
 def insert_after(state: UIState, entry: Entry, after_id: str | None) -> int:
